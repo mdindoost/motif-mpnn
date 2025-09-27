@@ -1,0 +1,33 @@
+# datasets.yml — registry of datasets and splits
+datasets:
+  cora:
+    task: node
+    is_directed: false
+    num_classes: 7
+    split_seed: 42
+    note: "Planetoid Cora; small, static."
+  citeseer:
+    task: node
+    is_directed: false
+    num_classes: 6
+    split_seed: 42
+  pubmed:
+    task: node
+    is_directed: false
+    num_classes: 3
+    split_seed: 42
+  proteins:
+    task: graph
+    is_directed: false
+    num_classes: 2
+    split_seed: 42
+  nci1:
+    task: graph
+    is_directed: false
+    num_classes: 2
+    split_seed: 42
+  enzymes:
+    task: graph
+    is_directed: false
+    num_classes: 6
+    split_seed: 42

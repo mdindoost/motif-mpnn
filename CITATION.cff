@@ -1,0 +1,10 @@
+cff-version: 1.2.0
+title: "Motif-Augmented MPNN (M-MPNN)"
+message: "If you use this software, please cite it as below."
+type: software
+authors:
+  - family-names: Dindoost
+    given-names: Mohammad
+repository-code: "https://github.com/mdindoost/motif-mpnn"
+keywords: [graphs, GNN, motifs, message-passing, higher-order, PyTorch]
+license: MIT

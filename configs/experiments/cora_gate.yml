@@ -1,0 +1,12 @@
+# Experiment: Cora + Gate (motif-gated messages)
+dataset: cora
+variant: gate
+use_motif_edge: true
+use_A_motif: false
+pruning:
+  node_topk: 32
+  edge_topk: 16
+normalize:
+  log1p: true
+  zscore: true
+  degree_norm: false

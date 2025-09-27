@@ -1,0 +1,16 @@
+name: smoke-test
+on: [push, pull_request]
+jobs:
+  structure:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify required files exist
+        run: |
+          test -f README.md
+          test -f environment.yml
+          test -f configs/datasets.yml
+          test -f configs/defaults.yml
+          test -f configs/experiments/cora_concat.yml
+          test -d src
+          test -d scripts

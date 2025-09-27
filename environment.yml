@@ -1,0 +1,17 @@
+name: motif-mpnn
+channels: [pytorch, pyg, conda-forge, defaults]
+dependencies:
+  - python>=3.10,<3.12
+  - pip
+  - numpy
+  - scipy
+  - pandas
+  - matplotlib
+  - pytorch
+  - torchvision
+  - torchaudio
+  - pyg  # PyTorch Geometric (pre-built wheels channel)
+  - pip:
+      - pyyaml
+      - tqdm
+      - networkx

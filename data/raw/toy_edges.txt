@@ -1,0 +1,5 @@
+# toy graph (u v) per line
+0 1
+1 2
+2 0
+0 3

@@ -1,0 +1,12 @@
+# Experiment: Cora + Concat (feature injection)
+dataset: cora
+variant: concat   # choices: concat | gate | mix | gcn | gat | sage | motif_adj | graphlet_concat
+use_motif_edge: false
+use_A_motif: false
+pruning:
+  node_topk: 32
+  edge_topk: 0
+normalize:
+  log1p: true
+  zscore: true
+  degree_norm: false
