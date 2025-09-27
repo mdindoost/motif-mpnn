@@ -1,17 +1,9 @@
 name: motif-mpnn
-channels: [pytorch, pyg, conda-forge, defaults]
+channels:
+  - defaults
 dependencies:
-  - python>=3.10,<3.12
-  - pip
-  - numpy
-  - scipy
-  - pandas
-  - matplotlib
+  - python=3.10
   - pytorch
-  - torchvision
-  - torchaudio
-  - pyg  # PyTorch Geometric (pre-built wheels channel)
-  - pip:
-      - pyyaml
-      - tqdm
-      - networkx
+  - pytorch-cuda=12.1
+  - pyg
+prefix: /home/md724/miniconda3/envs/motif-mpnn
