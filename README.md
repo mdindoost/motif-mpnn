@@ -11,6 +11,10 @@ This repo aims to be *simple to run* and *reproducible* without code bloat.
    conda activate motif-mpnn
    ```
 2. Prepare data (download Cora/Citeseer/Pubmed or PROTEINS/NCI1/ENZYMES).
+### Get datasets
+```bash
+python scripts/preprocess/download_datasets.py
+
 3. Precompute motifs with HiPerXplorer and place outputs under `data/precompute/<graph>/`.
    See **`scripts/preprocess/README.md`** for file expectations.
 4. Run a curated experiment config:
