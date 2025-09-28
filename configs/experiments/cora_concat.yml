@@ -1,12 +1,16 @@
-# Experiment: Cora + Concat (feature injection)
-dataset: cora
-variant: concat   # choices: concat | gate | mix | gcn | gat | sage | motif_adj | graphlet_concat
-use_motif_edge: false
-use_A_motif: false
-pruning:
-  node_topk: 32
-  edge_topk: 0
-normalize:
-  log1p: true
-  zscore: true
-  degree_norm: false
+# Minimal experiment that validates Phase A plumbing using the dummy dataset.
+# In Phase B we’ll switch dataset.name → 'cora' and remove the stub.
+dataset:
+name: dummy_node
+task: node
+root: data/processed
+
+
+model:
+name: identity
+hidden_dim: 64
+num_layers: 2
+dropout: 0.5
+
+
+run_name: phaseA_smoke
