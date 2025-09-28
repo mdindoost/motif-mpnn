@@ -1,0 +1,3 @@
+dataset: enzymes
+variant: gcn
+run_name: phaseB_enzymes_gcn

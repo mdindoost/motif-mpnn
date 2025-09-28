@@ -1,0 +1,3 @@
+dataset: nci1
+variant: gcn
+run_name: phaseB_nci1_gcn

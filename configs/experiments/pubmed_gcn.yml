@@ -1,0 +1,3 @@
+dataset: pubmed
+variant: gcn
+run_name: phaseB_pubmed_gcn
