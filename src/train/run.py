@@ -22,9 +22,7 @@ def main():
     exp = load_config(args.config)
     print("[cfg]", {"dataset": exp.dataset.name, "model": exp.model.name, "variant": exp.variant})
 
-    # Ensure registry side-effects are loaded (these imports should be at file top):
-    # import src.datasets  # noqa: F401
-    # import src.models    # noqa: F401
+
 
     # Dataset
     DatasetCls = DATASET_REGISTRY.get(exp.dataset.name)
@@ -44,6 +42,11 @@ def main():
     motif_dim = 0
     if task == "node" and getattr(dataset, "motif_x", None) is not None:
         motif_dim = int(dataset.motif_x.size(1))
+
+
+    # after computing motif_dim
+    motif_manifest = getattr(dataset, "motif_manifest", {})
+    # motif_ids_used = list(motif_manifest.keys()) if motif_manifest else []
 
     # Model (use the real dims/task; include motif_dim so concat can widen input)
     ModelCls = MODEL_REGISTRY.get(exp.model.name)
@@ -66,6 +69,8 @@ def main():
         "normalize": exp.normalize,
         "pruning": exp.pruning,
         "timestamp": datetime.now().isoformat(timespec="seconds"),
+        "motif_dim": motif_dim,
+        "motif_manifest_keys": list(motif_manifest.keys())[:5],
     }
     with open(save_dir / "manifest.json", "w") as f:
         json.dump(manifest, f, indent=2)

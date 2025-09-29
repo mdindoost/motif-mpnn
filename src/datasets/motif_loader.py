@@ -111,7 +111,7 @@ def build_or_load_node_motif_X(dataset: str, num_nodes: int, precompute_dir: str
 
     # Try cache first
     if cache_p.exists() and manifest_p.exists() and stats_p.exists():
-        X = torch.load(cache_p)
+        X = torch.load(cache_p, weights_only=False)  # explicit for current PyTorch
         stats = _read_json(stats_p) or {}
         manifest = _read_json(manifest_p) or {}
         return MotifArtifacts(X=X, stats=stats, manifest=manifest)
