@@ -57,8 +57,16 @@ def main():
     # Only pass motif_dim to motif-aware variants
     if exp.model.name in {"concat", "gate", "mix"}:
         model_kwargs["motif_dim"] = motif_dim
-    model = ModelCls(**model_kwargs)
 
+    # NEW: pass gate-specific knobs if present
+    gate_cfg = {}
+    if exp.model.name == "gate":
+        # exp.raw holds the raw merged YAML (you added this in ExperimentConfig)
+        gate_cfg = exp.raw.get("gate", {}) or {}
+
+    model = ModelCls(**{**model_kwargs, **gate_cfg})
+    
+    
     # ---------------- Run dir + manifest ----------------
     save_dir = Path(exp.save_dir) / f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{exp.run_name}"
     save_dir.mkdir(parents=True, exist_ok=True)
