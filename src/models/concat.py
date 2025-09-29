@@ -1,33 +1,31 @@
 # src/models/concat.py
 from typing import Any
+import torch
 from torch import nn
 from torch_geometric.nn import global_mean_pool
 
-
 from src.utils.registry import MODEL_REGISTRY
-from .gcn import GCN # reuse GCN encoder stack
-
+from .gcn import GCN  # reuse encoder stack
 
 class ConcatModel(nn.Module):
     def __init__(self, in_dim: int, out_dim: int, motif_dim: int = 0, **kwargs: Any):
         super().__init__()
         enc_in = in_dim + max(0, motif_dim)
-        # reuse GCN as a strong encoder backbone for now
+        # use GCN encoder; kwargs include hidden_dim, num_layers, dropout, task, etc.
         self.encoder = GCN(in_dim=enc_in, out_dim=out_dim, **kwargs)
-        self.task = kwargs.get('task', 'node')
-
+        self.task = kwargs.get("task", "node")
+        self.motif_dim = motif_dim
 
     def forward(self, data):
-        # Expect `data` to provide .x and optional .motif_x for node task
-        if self.task == 'node':
+        if self.task == "node":
             x = data.x
-            if hasattr(data, 'motif_x') and data.motif_x is not None:
-                x = x.new_zeros((x.size(0), x.size(1) + data.motif_x.size(1))).to(x.device)
-            return self.encoder.forward(type('Obj', (), {'x': x, 'edge_index': data.edge_index, 'batch': getattr(data, 'batch', None)}))
+            if hasattr(data, "motif_x") and data.motif_x is not None and data.motif_x.numel() > 0:
+                x = torch.cat([x, data.motif_x.to(x.device, dtype=x.dtype)], dim=1)
+            proxy = type("Obj", (), {"x": x, "edge_index": data.edge_index, "batch": getattr(data, "batch", None)})
+            return self.encoder.forward(proxy)
         else:
-            # For TU, we’ll attach per-batch motif tensors later; placeholder path for now
+            # TU graph task: we’ll attach per-graph motif_x in Phase C.1
             return self.encoder(data)
-
 
 @MODEL_REGISTRY.register("concat")
 class ConcatFactory:
