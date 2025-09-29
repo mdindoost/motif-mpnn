@@ -48,3 +48,10 @@ data/raw_export
 # Experiment / logging
 wandb/
 logs/
+
+# runtime artifacts
+results/
+*.pt
+**/__pycache__/
+*.pyc
+

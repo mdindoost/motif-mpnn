@@ -1,12 +1,10 @@
-# Experiment: PROTEINS + GCN (baseline)
 dataset: proteins
-variant: gcn        # will map to real GCN once Phase D models are in; for now Identity placeholder
+variant: gcn
 run_name: phaseB_proteins_gcn
-
-# Optional knobs (kept simple for baseline)
 train:
   epochs: 200
   patience: 50
+  batch_size: 64
 optim:
   lr: 0.01
   weight_decay: 0.0
