@@ -88,6 +88,10 @@ def main():
         masks = getattr(dataset, 'splits', None)
         if masks is None:
             raise RuntimeError('Node dataset missing splits masks')
+        # Attach motif_x if present
+        if getattr(dataset, 'motif_x', None) is not None:
+            dataset.data.motif_x = dataset.motif_x
+
         final = train_node_task(model, dataset.data, masks,
                 epochs=epochs, lr=lr, weight_decay=wd,
                 save_dir=save_dir, num_classes=out_dim, device=device)

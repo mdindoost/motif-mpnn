@@ -6,6 +6,7 @@ import torch
 from torch import Tensor
 from torch_geometric.datasets import Planetoid
 from torch_geometric.utils import index_to_mask
+from src.datasets.motif_loader import build_or_load_node_motif_X
 
 from src.utils.registry import DATASET_REGISTRY
 
@@ -93,6 +94,12 @@ class CoraDataset:
         self.splits = self.bundle.splits
         self.num_features = self.bundle.num_features
         self.num_classes = self.bundle.num_classes
+        # optional motifs (graceful if not present)
+        pre_dir = "data/precompute/cora"
+        art = build_or_load_node_motif_X(dataset="cora", num_nodes=self.data.num_nodes, precompute_dir=pre_dir)
+        self.motif_x = art.X                 # None if not present
+        self.motif_stats = art.stats         # {} if not present
+        self.motif_manifest = art.manifest   # {} if not present
 
 
 @DATASET_REGISTRY.register("citeseer")
@@ -104,7 +111,12 @@ class CiteseerDataset:
         self.splits = self.bundle.splits
         self.num_features = self.bundle.num_features
         self.num_classes = self.bundle.num_classes
-
+        # optional motifs
+        pre_dir = "data/precompute/citeseer"
+        art = build_or_load_node_motif_X(dataset="citeseer", num_nodes=self.data.num_nodes, precompute_dir=pre_dir)
+        self.motif_x = art.X
+        self.motif_stats = art.stats
+        self.motif_manifest = art.manifest
 
 @DATASET_REGISTRY.register("pubmed")
 class PubmedDataset:
@@ -115,3 +127,9 @@ class PubmedDataset:
         self.splits = self.bundle.splits
         self.num_features = self.bundle.num_features
         self.num_classes = self.bundle.num_classes
+        # optional motifs
+        pre_dir = "data/precompute/pubmed"
+        art = build_or_load_node_motif_X(dataset="pubmed", num_nodes=self.data.num_nodes, precompute_dir=pre_dir)
+        self.motif_x = art.X
+        self.motif_stats = art.stats
+        self.motif_manifest = art.manifest
