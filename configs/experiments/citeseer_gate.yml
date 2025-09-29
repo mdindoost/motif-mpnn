@@ -1,6 +1,6 @@
-dataset: cora
+dataset: citeseer
 variant: gate
-run_name: cora_gate
+run_name: citeseer_gate
 train:
   epochs: 200
   patience: 50
@@ -8,4 +8,5 @@ train:
 optim:
   lr: 0.01
   weight_decay: 0.0
+
 

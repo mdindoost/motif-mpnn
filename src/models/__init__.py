@@ -20,6 +20,7 @@ class IdentityFactory(IdentityModel):
 from .gcn import *   # noqa: F401,F403
 from .sage import *  # noqa: F401,F403
 from .gat import *   # noqa: F401,F403
+from .gate import *   # noqa: F401,F403
 
 # Keep placeholders ONLY for upcoming motif variants
 for _k in ["concat", "gate", "mix", "motif_adj", "graphlet_concat"]:

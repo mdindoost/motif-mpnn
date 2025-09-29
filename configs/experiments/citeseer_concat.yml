@@ -4,3 +4,7 @@ run_name: citeseer_concat
 train:
   epochs: 200
   patience: 50
+  seed: 42 # for reproducibility
+optim:
+  lr: 0.01
+  weight_decay: 0.0 
