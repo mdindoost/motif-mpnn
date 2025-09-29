@@ -1,7 +1,6 @@
 dataset: citeseer
-variant: gcn
-run_name: citeseer_gcn
+variant: concat
+run_name: citeseer_concat
 train:
   epochs: 200
   patience: 50
-

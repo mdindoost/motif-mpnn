@@ -2,16 +2,19 @@
 import argparse
 import json
 import os
-import torch
-
-import src.datasets  # noqa: F401
-import src.models    # noqa: F401
-
 from datetime import datetime
 from pathlib import Path
+from src.utils.seed import fix_seed
+
+import torch
 
 from src.utils.config import load_config
 from src.utils.registry import MODEL_REGISTRY, DATASET_REGISTRY
+
+# Ensure registries populate via import side-effects
+import src.datasets  # noqa: F401
+import src.models    # noqa: F401
+
 
 def main():
     parser = argparse.ArgumentParser()
@@ -20,17 +23,18 @@ def main():
     args = parser.parse_args()
 
     exp = load_config(args.config)
+    fix_seed(getattr(exp.train, "seed", 0))
+
     print("[cfg]", {"dataset": exp.dataset.name, "model": exp.model.name, "variant": exp.variant})
 
-
-
-    # Dataset
+    # ---------------- Dataset ----------------
     DatasetCls = DATASET_REGISTRY.get(exp.dataset.name)
     dataset = DatasetCls(root=exp.dataset.root)
 
-    # Infer dims + task
+    # Infer dims + task from dataset bundle
     if getattr(dataset, "task", "node") == "node":
-        in_dim = int(dataset.num_features if hasattr(dataset, "num_features") else dataset.data.x.size(-1))
+        in_dim = int(dataset.num_features if hasattr(dataset, "num_features")
+                     else dataset.data.x.size(-1))
         out_dim = int(dataset.num_classes)
         task = "node"
     else:
@@ -38,58 +42,65 @@ def main():
         out_dim = int(dataset.num_classes)
         task = "graph"
 
-    # Compute motif_dim (only matters for concat/other motif-aware variants)
+    # Motif dim (node task only for now)
     motif_dim = 0
     if task == "node" and getattr(dataset, "motif_x", None) is not None:
         motif_dim = int(dataset.motif_x.size(1))
 
-
-    # after computing motif_dim
-    motif_manifest = getattr(dataset, "motif_manifest", {})
-    # motif_ids_used = list(motif_manifest.keys()) if motif_manifest else []
-
-    # Model (use the real dims/task; include motif_dim so concat can widen input)
+    # ---------------- Model ----------------
     ModelCls = MODEL_REGISTRY.get(exp.model.name)
-    model = ModelCls(
+    model_kwargs = dict(
         in_dim=in_dim, out_dim=out_dim,
         hidden_dim=64, num_layers=2, dropout=0.5,
         layer_norm=True, residual=True, task=task,
-        motif_dim=motif_dim,
     )
+    # Only pass motif_dim to motif-aware variants
+    if exp.model.name in {"concat", "gate", "mix"}:
+        model_kwargs["motif_dim"] = motif_dim
+    model = ModelCls(**model_kwargs)
 
+    # ---------------- Run dir + manifest ----------------
     save_dir = Path(exp.save_dir) / f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{exp.run_name}"
     save_dir.mkdir(parents=True, exist_ok=True)
 
+    motif_manifest = getattr(dataset, "motif_manifest", {})
     manifest = {
         "config_path": os.path.abspath(args.config),
         "dataset": exp.dataset.name,
-        "task": exp.dataset.task,
+        "task": task,
         "model": exp.model.name,
         "variant": exp.variant,
         "normalize": exp.normalize,
         "pruning": exp.pruning,
-        "timestamp": datetime.now().isoformat(timespec="seconds"),
         "motif_dim": motif_dim,
-        "motif_manifest_keys": list(motif_manifest.keys())[:5],
+        "motif_manifest_preview_keys": list(motif_manifest.keys())[:5] if motif_manifest else [],
+        "timestamp": datetime.now().isoformat(timespec="seconds"),
     }
     with open(save_dir / "manifest.json", "w") as f:
         json.dump(manifest, f, indent=2)
 
+    # ---------------- Sanity prints ----------------
     print("=== Phase A/D sanity check ===")
     print("Dataset:", exp.dataset.name, "→", dataset.__class__.__name__)
-    print("Task:", task, "| in_dim:", in_dim, "out_dim:", out_dim, "motif_dim:", motif_dim)
+    if task == "node":
+        print(f"Task: {task} | in_dim: {in_dim} out_dim: {out_dim} motif_dim: {motif_dim}")
+    else:
+        print(f"Task: {task} | in_dim: {in_dim} out_dim: {out_dim}")
     print("Model:", exp.model.name, "→", model)
     print("Run dir:", str(save_dir))
 
-    # === Phase E: training ===
+    # ---------------- Phase E: training ----------------
     epochs = int(getattr(exp.train, 'epochs', 200))
-    # patience is read inside EarlyStopper default (50); keep for clarity
+    patience = int(getattr(exp.train, 'patience', 50))  # used by EarlyStopper default
     lr = float(getattr(exp.optim, 'lr', 0.01))
     wd = float(getattr(exp.optim, 'weight_decay', 0.0))
-    batch_size = int(getattr(exp.train, 'batch_size', 0))  # engine guards graph bs>0
+
+    # Graph tasks need a positive batch size; node tasks can be full-batch (0)
+    raw_bs = int(getattr(exp.train, 'batch_size', 0))
+    batch_size = raw_bs if (task == "node" or raw_bs > 0) else 64
 
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
-    print(f"Training on {device} for up to {epochs} epochs (patience=50)...")
+    print(f"Training on {device} for up to {epochs} epochs (patience={patience})...")
 
     from src.train.engine import train_node_task, train_graph_task
 
@@ -97,7 +108,7 @@ def main():
         masks = getattr(dataset, 'splits', None)
         if masks is None:
             raise RuntimeError('Node dataset missing splits masks')
-        # Attach motif_x for motif-aware variants
+        # Attach motif_x if present so motif-aware models can consume it
         if getattr(dataset, 'motif_x', None) is not None:
             dataset.data.motif_x = dataset.motif_x
         final = train_node_task(model, dataset.data, masks,

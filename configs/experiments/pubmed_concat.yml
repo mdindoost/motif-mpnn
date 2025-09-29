@@ -1,6 +1,6 @@
 dataset: pubmed
-variant: gcn
-run_name: pubmed_gcn
+variant: concat
+run_name: pubmed_concat
 train:
   epochs: 200
   patience: 50
