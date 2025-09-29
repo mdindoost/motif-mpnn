@@ -22,7 +22,9 @@ def main():
     exp = load_config(args.config)
     print("[cfg]", {"dataset": exp.dataset.name, "model": exp.model.name, "variant": exp.variant})
 
-
+    # Ensure registry side-effects are loaded (these imports should be at file top):
+    # import src.datasets  # noqa: F401
+    # import src.models    # noqa: F401
 
     # Dataset
     DatasetCls = DATASET_REGISTRY.get(exp.dataset.name)
@@ -38,12 +40,18 @@ def main():
         out_dim = int(dataset.num_classes)
         task = "graph"
 
-    # Model (use the real dims/task; do NOT overwrite afterward)
+    # Compute motif_dim (only matters for concat/other motif-aware variants)
+    motif_dim = 0
+    if task == "node" and getattr(dataset, "motif_x", None) is not None:
+        motif_dim = int(dataset.motif_x.size(1))
+
+    # Model (use the real dims/task; include motif_dim so concat can widen input)
     ModelCls = MODEL_REGISTRY.get(exp.model.name)
     model = ModelCls(
         in_dim=in_dim, out_dim=out_dim,
         hidden_dim=64, num_layers=2, dropout=0.5,
-        layer_norm=True, residual=True, task=task
+        layer_norm=True, residual=True, task=task,
+        motif_dim=motif_dim,
     )
 
     save_dir = Path(exp.save_dir) / f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{exp.run_name}"
@@ -64,49 +72,44 @@ def main():
 
     print("=== Phase A/D sanity check ===")
     print("Dataset:", exp.dataset.name, "→", dataset.__class__.__name__)
-    print("Task:", task, "| in_dim:", in_dim, "out_dim:", out_dim)
+    print("Task:", task, "| in_dim:", in_dim, "out_dim:", out_dim, "motif_dim:", motif_dim)
     print("Model:", exp.model.name, "→", model)
     print("Run dir:", str(save_dir))
 
     # === Phase E: training ===
     epochs = int(getattr(exp.train, 'epochs', 200))
-    patience = int(getattr(exp.train, 'patience', 50)) # used inside EarlyStopper default
+    # patience is read inside EarlyStopper default (50); keep for clarity
     lr = float(getattr(exp.optim, 'lr', 0.01))
     wd = float(getattr(exp.optim, 'weight_decay', 0.0))
-    batch_size = int(getattr(exp.train, 'batch_size', 64))
-
+    batch_size = int(getattr(exp.train, 'batch_size', 0))  # engine guards graph bs>0
 
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
-    print(f"Training on {device} for up to {epochs} epochs (patience={patience})...")
-
+    print(f"Training on {device} for up to {epochs} epochs (patience=50)...")
 
     from src.train.engine import train_node_task, train_graph_task
 
-
     if task == 'node':
-        # Expect masks from Phase B bundle
         masks = getattr(dataset, 'splits', None)
         if masks is None:
             raise RuntimeError('Node dataset missing splits masks')
-        # Attach motif_x if present
+        # Attach motif_x for motif-aware variants
         if getattr(dataset, 'motif_x', None) is not None:
             dataset.data.motif_x = dataset.motif_x
-
         final = train_node_task(model, dataset.data, masks,
-                epochs=epochs, lr=lr, weight_decay=wd,
-                save_dir=save_dir, num_classes=out_dim, device=device)
+                                epochs=epochs, lr=lr, weight_decay=wd,
+                                save_dir=save_dir, num_classes=out_dim, device=device)
     else:
         splits = getattr(dataset, 'splits', None)
         ds_obj = getattr(dataset, 'dataset', None)
         if splits is None or ds_obj is None:
             raise RuntimeError('Graph dataset missing splits or dataset object')
         final = train_graph_task(model, ds_obj, splits,
-                epochs=epochs, lr=lr, weight_decay=wd,
-                save_dir=save_dir, num_classes=out_dim,
-                batch_size=batch_size, device=device)
-
+                                 epochs=epochs, lr=lr, weight_decay=wd,
+                                 save_dir=save_dir, num_classes=out_dim,
+                                 batch_size=batch_size, device=device)
 
     print('Final test:', final)
+
 
 if __name__ == "__main__":
     main()
