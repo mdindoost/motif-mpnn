@@ -1,4 +1,5 @@
 # Minimal experiment that validates Phase A plumbing using the dummy dataset.
+variant: gcn
 # In Phase B we’ll switch dataset.name → 'cora' and remove the stub.
 dataset:
 name: dummy_node

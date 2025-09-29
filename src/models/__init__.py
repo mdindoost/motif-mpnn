@@ -2,6 +2,7 @@
 from typing import Any
 from src.utils.registry import MODEL_REGISTRY
 
+# Identity stays only for in-progress motif variants
 class IdentityModel:
     def __init__(self, in_dim: int = 1, out_dim: int = 1, **kwargs: Any):
         self.in_dim = in_dim
@@ -14,6 +15,12 @@ class IdentityModel:
 class IdentityFactory(IdentityModel):
     pass
 
-# Map all planned model keys to identity for Phase A smoke
-for _k in ["gcn", "gat", "sage", "concat", "gate", "mix", "motif_adj", "graphlet_concat"]:
-    MODEL_REGISTRY._store[_k] = IdentityFactory
+# Import real baselines (registers: gcn, sage, gat)
+from .gcn import *   # noqa: F401,F403
+from .sage import *  # noqa: F401,F403
+from .gat import *   # noqa: F401,F403
+
+# Keep placeholders ONLY for upcoming motif variants
+for _k in ["concat", "gate", "mix", "motif_adj", "graphlet_concat"]:
+    if _k not in MODEL_REGISTRY:
+        MODEL_REGISTRY._store[_k] = IdentityFactory
