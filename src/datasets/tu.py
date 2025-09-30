@@ -1,20 +1,23 @@
 # src/datasets/tu.py
+from __future__ import annotations
 from dataclasses import dataclass
-from typing import Any, Dict, List, Tuple
+from pathlib import Path
+from typing import Any, Dict, List
 
 import torch
-from torch.utils.data import Subset
 from torch_geometric.datasets import TUDataset
 
 from src.utils.registry import DATASET_REGISTRY
+from src.datasets.motif_loader import build_or_load_tu_motif_list
+from src.datasets.tu_wrapper import TUWithMotifs
 
 
 @dataclass
 class GraphDatasetBundle:
-    pyg: Any                 # TUDataset
+    pyg: Any                 # TUDataset (or wrapped)
     num_features: int
     num_classes: int
-    splits: Dict[str, List[int]]  # {'train': [idx...], 'val': [...], 'test': [...]}
+    splits: Dict[str, List[int]]  # {'train': [...], 'val': [...], 'test': [...]}
 
 
 def _seeded_generator(seed: int) -> torch.Generator:
@@ -36,8 +39,7 @@ def _stratified_indices(labels: torch.Tensor, seed: int, ratios=(0.8, 0.1, 0.1))
         n = perm.numel()
         n_train = int(round(ratios[0] * n))
         n_val = int(round(ratios[1] * n))
-        # ensure all samples assigned
-        n_test = n - n_train - n_val
+        n_test = n - n_train - n_val  # ensure all samples assigned
         train_idx.append(perm[:n_train])
         val_idx.append(perm[n_train:n_train + n_val])
         test_idx.append(perm[n_train + n_val:])
@@ -46,23 +48,61 @@ def _stratified_indices(labels: torch.Tensor, seed: int, ratios=(0.8, 0.1, 0.1))
 
 
 def _load_tu(name: str, root: str, split_seed: int = 42) -> GraphDatasetBundle:
-    ds = TUDataset(root=root, name=name.upper())  # 'PROTEINS', 'NCI1', 'ENZYMES'
+    """
+    Load a TU dataset and return a bundle with deterministic stratified splits.
+    Notes:
+      - We place the raw TU data under {root}/tu/{NAME} for cleanliness.
+      - 'name' may be 'proteins' | 'nci1' | 'enzymes' (case-insensitive).
+    """
+    name_upper = name.upper()
+    ds_root = Path(root) / "tu" / name_upper
+    ds = TUDataset(root=ds_root, name=name_upper)
+
+    # labels for stratified split
     y = torch.tensor([ds[i].y.item() for i in range(len(ds))], dtype=torch.long)
     splits = _stratified_indices(y, seed=split_seed)
+
+    # infer dims from dataset metadata
+    num_features = int(ds.num_features)
+    num_classes = int(ds.num_classes)
+
     return GraphDatasetBundle(
         pyg=ds,
-        num_features=ds.num_features,
-        num_classes=ds.num_classes,
+        num_features=num_features,
+        num_classes=num_classes,
         splits=splits,
     )
+
+
+def _maybe_wrap_with_motifs(dataset_key: str, base_ds) -> tuple[Any, Dict, Dict]:
+    """
+    If motif artifacts exist under data/precompute/{dataset_key}, wrap the dataset
+    so each graph's Data carries .motif_x with aligned per-node motif features.
+    Returns: (wrapped_or_base, stats, manifest)
+    """
+    pre_dir = f"data/precompute/{dataset_key.lower()}"
+    art = build_or_load_tu_motif_list(dataset=dataset_key.lower(), pyg_dataset=base_ds, precompute_dir=pre_dir)
+    if art.X_list is not None:
+        wrapped = TUWithMotifs(base_ds, art.X_list)  # pads/crops safely if needed
+        return wrapped, (art.stats or {}), (art.manifest or {})
+    return base_ds, (art.stats or {}), (art.manifest or {})
 
 
 @DATASET_REGISTRY.register("proteins")
 class ProteinsDataset:
     task = "graph"
+
     def __init__(self, root: str = "data/processed", split_seed: int = 42, **kwargs: Any):
+        # Load base TU and splits
         self.bundle = _load_tu("proteins", root, split_seed=split_seed)
-        self.dataset = self.bundle.pyg
+
+        # Optionally wrap with motifs
+        wrapped, stats, manifest = _maybe_wrap_with_motifs("proteins", self.bundle.pyg)
+        self.dataset = wrapped
+        self.motif_stats = stats
+        self.motif_manifest = manifest
+
+        # Expose common attrs
         self.num_features = self.bundle.num_features
         self.num_classes = self.bundle.num_classes
         self.splits = self.bundle.splits
@@ -71,9 +111,15 @@ class ProteinsDataset:
 @DATASET_REGISTRY.register("nci1")
 class NCI1Dataset:
     task = "graph"
+
     def __init__(self, root: str = "data/processed", split_seed: int = 42, **kwargs: Any):
         self.bundle = _load_tu("nci1", root, split_seed=split_seed)
-        self.dataset = self.bundle.pyg
+
+        wrapped, stats, manifest = _maybe_wrap_with_motifs("nci1", self.bundle.pyg)
+        self.dataset = wrapped
+        self.motif_stats = stats
+        self.motif_manifest = manifest
+
         self.num_features = self.bundle.num_features
         self.num_classes = self.bundle.num_classes
         self.splits = self.bundle.splits
@@ -82,9 +128,15 @@ class NCI1Dataset:
 @DATASET_REGISTRY.register("enzymes")
 class ENZYMESDataset:
     task = "graph"
+
     def __init__(self, root: str = "data/processed", split_seed: int = 42, **kwargs: Any):
         self.bundle = _load_tu("enzymes", root, split_seed=split_seed)
-        self.dataset = self.bundle.pyg
+
+        wrapped, stats, manifest = _maybe_wrap_with_motifs("enzymes", self.bundle.pyg)
+        self.dataset = wrapped
+        self.motif_stats = stats
+        self.motif_manifest = manifest
+
         self.num_features = self.bundle.num_features
         self.num_classes = self.bundle.num_classes
         self.splits = self.bundle.splits
