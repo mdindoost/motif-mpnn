@@ -156,9 +156,9 @@ If you use this repo, please cite:
 
 ```bibtex
 @misc{motif-mpnn,
-  author = {Your Name},
+  author = {Mohammad Dindoost},
   title = {Motif-Augmented MPNN},
   year = {2025},
-  howpublished = {\url{https://github.com/<your-username>/motif-mpnn}}
+  howpublished = {\url{https://github.com/mdindoost/motif-mpnn}}
 }
 ```
