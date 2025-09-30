@@ -1,12 +1,20 @@
 # Motif-Augmented MPNN
 
-Motif-Augmented MPNN (Motif-MPNN) is an experimental graph learning framework where **motif statistics** (from HiPerXplorer) are injected into Graph Neural Networks to enrich message passing.  
+Motif-Augmented MPNN (Motif-MPNN) is an experimental graph learning framework where **motif statistics** (exported from [HiPerXplorer](https://github.com/your-org/hiperxplorer)) are injected into Graph Neural Networks to enrich message passing.  
 
-We build on top of PyTorch Geometric (PyG), extending standard baselines (GCN, GraphSAGE, GAT) with motif-aware variants:
+We build on top of [PyTorch Geometric (PyG)](https://pytorch-geometric.readthedocs.io/), extending standard baselines with motif-aware counterparts:
 
-- **Concat** — Concatenate motif counts to node features.  
-- **Gate** — Use motif context to gate edge messages.  
-- **Mix** (coming soon) — Blend structural adjacency with motif adjacency.  
+- **Baselines**:  
+  - GCN  
+  - GraphSAGE  
+  - GAT  
+
+- **Motif-aware variants**:  
+  - **Concat** — Concatenate motif features to node features before message passing.  
+  - **Gate** — Learn edge-wise gates from motif context to modulate messages.  
+  - **Mix** — Blend structural adjacency with motif-derived similarity adjacency.  
+
+The framework is designed for both **node classification** (Cora, Citeseer, Pubmed) and **graph classification** (PROTEINS, NCI1, ENZYMES). Motif features are loaded from CSV artifacts and cached as tensors for efficient training.
 
 ---
 
