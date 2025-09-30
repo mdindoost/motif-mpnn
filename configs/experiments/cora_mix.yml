@@ -1,15 +1,15 @@
-# Experiment: Cora + Mix (A and A_motif mixing)
 dataset: cora
 variant: mix
-use_motif_edge: false
-use_A_motif: true
-lambda:
-  mode: scalar   # scalar | nodewise
-  value: 0.25
-pruning:
-  node_topk: 32
-  edge_topk: 0
-normalize:
-  log1p: true
-  zscore: true
-  degree_norm: false
+run_name: cora_mix
+mix:
+  lambda_mix: 0.25       # weight for motif adjacency
+  motif_topk: 10         # sparsify motif-sim adjacency
+  sim_metric: cosine     # cosine | dot
+  self_loop: true
+train:
+  epochs: 200
+  patience: 50
+  seed: 42
+optim:
+  lr: 0.01
+  weight_decay: 0.0

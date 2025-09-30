@@ -2,6 +2,7 @@
 from typing import Any
 from src.utils.registry import MODEL_REGISTRY
 from .concat import * # noqa: F401,F403
+from .mix import *   # noqa: F401,F403
 
 # Identity stays only for in-progress motif variants
 class IdentityModel:

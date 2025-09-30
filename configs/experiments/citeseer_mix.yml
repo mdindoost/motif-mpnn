@@ -1,0 +1,15 @@
+dataset: citeseer
+variant: mix
+run_name: citeseer_mix
+mix:
+  lambda_mix: 0.25
+  motif_topk: 10
+  sim_metric: cosine
+  self_loop: true
+train:
+  epochs: 200
+  patience: 50
+  seed: 42
+optim:
+  lr: 0.01
+  weight_decay: 0.0

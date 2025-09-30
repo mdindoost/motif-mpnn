@@ -58,14 +58,35 @@ def main():
     if exp.model.name in {"concat", "gate", "mix"}:
         model_kwargs["motif_dim"] = motif_dim
 
-    # NEW: pass gate-specific knobs if present
+    # Pass gate-specific knobs if present
     gate_cfg = {}
     if exp.model.name == "gate":
         # exp.raw holds the raw merged YAML (you added this in ExperimentConfig)
         gate_cfg = exp.raw.get("gate", {}) or {}
 
-    model = ModelCls(**{**model_kwargs, **gate_cfg})
-    
+    # Pass mix-specific knobs if present
+
+    mix_cfg = {}
+    if exp.model.name == "mix":
+        mix_cfg = (getattr(exp, "raw", {}) or {}).get("mix", {}) or {}
+        
+        # Back-compat: map old keys if present
+        if not mix_cfg:
+            raw = getattr(exp, "raw", {}) or {}
+            if raw.get("use_A_motif", False):
+                lam_raw = raw.get("lambda")
+                lam = (lam_raw.get("value") if isinstance(lam_raw, dict) else lam_raw)
+                if lam is not None:
+                    mix_cfg["lambda_mix"] = float(lam)
+        
+        # Set defaults if not provided
+        mix_cfg.setdefault("lambda_mix", 0.25)
+        mix_cfg.setdefault("motif_topk", 10)
+        mix_cfg.setdefault("sim_metric", "cosine")
+        mix_cfg.setdefault("self_loop", True)
+
+    # Merge all config dicts into model_kwargs
+    model = ModelCls(**{**model_kwargs, **gate_cfg, **mix_cfg})    
     
     # ---------------- Run dir + manifest ----------------
     save_dir = Path(exp.save_dir) / f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{exp.run_name}"
