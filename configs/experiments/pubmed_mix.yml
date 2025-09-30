@@ -2,9 +2,9 @@ dataset: pubmed
 variant: mix
 run_name: pubmed_mix
 mix:
-  lambda_mix: 0.25
+  lambda_mix: 0.25     # 0.15–0.35 is a good small sweep if you tune later
   motif_topk: 10
-  sim_metric: cosine
+  sim_metric: cosine   # try "dot" if cosine seems flat
   self_loop: true
 train:
   epochs: 200
@@ -13,3 +13,4 @@ train:
 optim:
   lr: 0.01
   weight_decay: 0.0
+

@@ -4,3 +4,8 @@ run_name: pubmed_gcn
 train:
   epochs: 200
   patience: 50
+  seed: 42
+optim:
+  lr: 0.01
+  weight_decay: 0.0
+
