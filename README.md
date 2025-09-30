@@ -14,7 +14,7 @@ We build on top of PyTorch Geometric (PyG), extending standard baselines (GCN, G
 
 ### 1. Clone & setup environment
 ```bash
-git clone https://github.com/<your-username>/motif-mpnn.git
+git clone https://github.com/mdindoost/motif-mpnn.git
 cd motif-mpnn
 conda env create -f environment.yml
 conda activate motif-mpnn
