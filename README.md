@@ -42,22 +42,89 @@ On first run, the loader will generate:
 
 ## 🧪 Running Experiments
 
-Each experiment is described by a YAML config in `configs/experiments/`.
+All experiments are described by YAML configs in `configs/experiments/`.  
+The runner script loads the config, instantiates the dataset + model, and trains with early stopping.  
 
-**Example: Cora GCN (baseline)**
+### General usage
+```bash
+python -m src.train.run --config <path-to-yaml>
+```
+
+---
+
+### 🔹 Planetoid datasets (Cora, Citeseer, Pubmed) — node classification
+
+**Baselines**
+
 ```bash
 python -m src.train.run --config configs/experiments/cora_gcn.yml
+python -m src.train.run --config configs/experiments/citeseer_gcn.yml
+python -m src.train.run --config configs/experiments/pubmed_gcn.yml
 ```
 
-**Example: Cora + motif concat**
+**Other baseline architectures**
+
 ```bash
+python -m src.train.run --config configs/experiments/cora_sage.yml
+python -m src.train.run --config configs/experiments/cora_gat.yml
+# similarly citeseer_sage.yml, pubmed_gat.yml, etc.
+```
+
+**Motif-augmented variants**
+
+```bash
+# Feature injection
 python -m src.train.run --config configs/experiments/cora_concat.yml
+python -m src.train.run --config configs/experiments/citeseer_concat.yml
+python -m src.train.run --config configs/experiments/pubmed_concat.yml
+
+# Edge gating with motifs
+python -m src.train.run --config configs/experiments/cora_gate.yml
+python -m src.train.run --config configs/experiments/citeseer_gate.yml
+python -m src.train.run --config configs/experiments/pubmed_gate.yml
+
+# Adjacency mixing (topology + motif similarity)
+python -m src.train.run --config configs/experiments/cora_mix.yml
+python -m src.train.run --config configs/experiments/citeseer_mix.yml
+python -m src.train.run --config configs/experiments/pubmed_mix.yml
 ```
 
-**Example: Citeseer + motif gate**
+---
+
+### 🔹 TU datasets (PROTEINS, NCI1, ENZYMES) — graph classification
+
+**Baselines**
+
 ```bash
-python -m src.train.run --config configs/experiments/citeseer_gate.yml
+python -m src.train.run --config configs/experiments/proteins_gcn.yml
+python -m src.train.run --config configs/experiments/nci1_gcn.yml
+python -m src.train.run --config configs/experiments/enzymes_gcn.yml
 ```
+
+**Motif-augmented variants**
+
+```bash
+# Feature injection
+python -m src.train.run --config configs/experiments/proteins_concat.yml
+python -m src.train.run --config configs/experiments/nci1_concat.yml
+python -m src.train.run --config configs/experiments/enzymes_concat.yml
+
+# Edge gating with motifs
+python -m src.train.run --config configs/experiments/proteins_gate.yml
+python -m src.train.run --config configs/experiments/nci1_gate.yml
+python -m src.train.run --config configs/experiments/enzymes_gate.yml
+
+# Adjacency mixing
+python -m src.train.run --config configs/experiments/proteins_mix.yml
+python -m src.train.run --config configs/experiments/nci1_mix.yml
+python -m src.train.run --config configs/experiments/enzymes_mix.yml
+```
+
+---
+
+### Notes
+* All configs set default `epochs`, `patience`, and `seed`. You can edit them to override hyper-parameters.
+
 
 Results are written under:
 ```bash
@@ -67,6 +134,7 @@ results/logs/<timestamp>_<run_name>/
 ```
 
 Final metrics are also printed at the end of each run.
+* To test reproducibility across seeds, add `train: { seed: <int> }` to any YAML.
 
 ---
 
