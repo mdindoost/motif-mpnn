@@ -1,0 +1,16 @@
+dataset: proteins
+variant: gate
+run_name: proteins_gate
+gate:
+  gate_hidden: 64     # MLP width for the motif gate
+  gate_temp: 1.0      # sigmoid temperature
+  gate_dropout: 0.0
+  gate_alpha: 0.5     # (optional) blend with 1: w = (1-α) + α·σ
+train:
+  epochs: 200
+  patience: 50
+  seed: 42
+  batch_size: 64
+optim:
+  lr: 0.01
+  weight_decay: 0.0

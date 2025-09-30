@@ -1,6 +1,8 @@
 dataset: enzymes
-variant: gcn
-run_name: enzymes_gcn
+variant: concat
+run_name: enzymes_concat
+concat:
+  motif_scale: 1.0
 train:
   epochs: 200
   patience: 50

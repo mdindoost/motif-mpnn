@@ -1,6 +1,8 @@
 dataset: proteins
-variant: gcn
-run_name: proteins_gcn
+variant: concat
+run_name: proteins_concat
+concat:
+  motif_scale: 1.0    # (optional) γ · motif_x before concat
 train:
   epochs: 200
   patience: 50

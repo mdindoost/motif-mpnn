@@ -1,6 +1,11 @@
 dataset: nci1
-variant: gcn
-run_name: nci1_gcn
+variant: mix
+run_name: nci1_mix
+mix:
+  lambda_mix: 0.25
+  motif_topk: 10
+  sim_metric: cosine
+  self_loop: true
 train:
   epochs: 200
   patience: 50

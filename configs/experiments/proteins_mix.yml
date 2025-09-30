@@ -1,0 +1,16 @@
+dataset: proteins
+variant: mix
+run_name: proteins_mix
+mix:
+  lambda_mix: 0.25    # weight of motif similarity in edge weights
+  motif_topk: 10      # keep top-k per source by motif similarity
+  sim_metric: cosine  # cosine | dot
+  self_loop: true
+train:
+  epochs: 200
+  patience: 50
+  seed: 42
+  batch_size: 64
+optim:
+  lr: 0.01
+  weight_decay: 0.0
