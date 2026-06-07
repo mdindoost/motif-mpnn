@@ -40,7 +40,7 @@ htmlcov/
 results/
 data/processed/
 data/precompute/
-data/raw_export
+data/raw_export/
 *.pt
 *.npz
 *.npy
@@ -48,10 +48,4 @@ data/raw_export
 # Experiment / logging
 wandb/
 logs/
-
-# runtime artifacts
-results/
-*.pt
-**/__pycache__/
-*.pyc
 

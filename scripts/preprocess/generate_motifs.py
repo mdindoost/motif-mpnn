@@ -24,7 +24,8 @@ MOTIF ID SCHEME (undirected, matches igraph motifs_undirected for k=3):
 Usage:
   python scripts/preprocess/generate_motifs.py --dataset cora --tool networkit
   python scripts/preprocess/generate_motifs.py --dataset proteins --tool igraph
-  python scripts/preprocess/generate_motifs.py --dataset cora --tool igraph  # igraph fallback
+  python scripts/preprocess/generate_motifs.py --dataset all
+  python scripts/preprocess/generate_motifs.py --dataset cora --force --verify
 
 HiPerXplorer swap: when HiPerXplorer is connected, replace this script's
 counting logic with a single HiPerXplorer call that writes the same CSV columns.
@@ -34,10 +35,12 @@ No changes needed in motif_loader.py or any model code.
 import argparse
 import csv
 import sys
+import time
 from pathlib import Path
 
 PLANETOID_DATASETS = {"cora", "citeseer", "pubmed"}
 TU_DATASETS = {"proteins", "nci1", "enzymes"}
+ALL_DATASETS = sorted(PLANETOID_DATASETS | TU_DATASETS)
 
 # HiPerXplorer-compatible motif ID scheme for undirected k=3 motifs (igraph convention)
 # k=3, motif_id=2 → open triangle (wedge / path of length 2), iso-type 2 in igraph
@@ -50,10 +53,9 @@ MOTIF_TRIANGLE = 3
 # Graph loading helpers
 # ---------------------------------------------------------------------------
 
-def _load_planetoid_as_nx(dataset: str):
+def _load_planetoid_as_nx(dataset: str, root: Path):
     """Load Planetoid graph via PyG and convert to networkx (undirected)."""
     try:
-        import torch
         from torch_geometric.datasets import Planetoid
         import networkx as nx
         from torch_geometric.utils import to_networkx
@@ -62,14 +64,13 @@ def _load_planetoid_as_nx(dataset: str):
         print("Install with: conda run -n motif-mpnn pip install torch_geometric networkx")
         sys.exit(1)
 
-    root = Path("data/processed")
     ds = Planetoid(root=str(root), name=dataset.capitalize())
     data = ds[0]
     G_nx = to_networkx(data, to_undirected=True)
     return G_nx, ds[0].num_nodes
 
 
-def _load_tu_graphs_as_nx(dataset: str):
+def _load_tu_graphs_as_nx(dataset: str, root: Path):
     """Load TU graphs via PyG and convert each to networkx (undirected)."""
     try:
         from torch_geometric.datasets import TUDataset
@@ -80,8 +81,8 @@ def _load_tu_graphs_as_nx(dataset: str):
         sys.exit(1)
 
     name_upper = dataset.upper()
-    root = Path("data/processed") / "pyg" / dataset.lower()
-    ds = TUDataset(root=str(root), name=name_upper)
+    tu_root = root / "pyg" / dataset.lower()
+    ds = TUDataset(root=str(tu_root), name=name_upper)
     graphs = []
     for i in range(len(ds)):
         g = to_networkx(ds[i], to_undirected=True)
@@ -106,34 +107,25 @@ def _count_motifs_networkit(G_nx, num_nodes: int):
         print("Or use --tool igraph as a fallback.")
         sys.exit(1)
 
-    # Build NetworKit graph
+    from tqdm import tqdm
+
     nk_G = nk.Graph(num_nodes, weighted=False, directed=False)
     for u, v in G_nx.edges():
         if u < num_nodes and v < num_nodes and u != v:
             if not nk_G.hasEdge(u, v):
                 nk_G.addEdge(u, v)
 
-    # Degree (k=1, motif_id=0)
     rows = []
-    for u in range(num_nodes):
+    for u in tqdm(range(num_nodes), desc="  degree (NetworKit)", unit="node"):
         deg = nk_G.degree(u)
         if deg > 0:
             rows.append((u, 1, 0, deg))
 
-    # Triangle count per node (k=3, motif_id=3)
-    # NetworKit's LocalClusteringCoefficient gives lcc = 2*triangles / (deg*(deg-1))
-    # We need raw triangle counts, so use TriangleCount if available, else compute from lcc.
-    try:
-        algo = nk.sparsification.LocalSimilarityScore(nk_G, list(nk_G.iterEdges()))
-    except Exception:
-        pass
-
-    # Use triangle counting via LCC
     lcc_algo = nk.centrality.LocalClusteringCoefficient(nk_G, turbo=True)
     lcc_algo.run()
-    lcc = lcc_algo.scores()  # per-node LCC in [0,1]
+    lcc = lcc_algo.scores()
 
-    for u in range(num_nodes):
+    for u in tqdm(range(num_nodes), desc="  triangles (NetworKit)", unit="node"):
         deg = nk_G.degree(u)
         if deg >= 2:
             triangles = int(round(lcc[u] * deg * (deg - 1) / 2))
@@ -162,27 +154,22 @@ def _count_motifs_igraph_single(g_nx, num_nodes: int):
         print("Install with: pip install igraph")
         sys.exit(1)
 
-    # Build igraph graph
     edges = [(u, v) for u, v in g_nx.edges() if u < num_nodes and v < num_nodes and u != v]
     g = ig.Graph(n=num_nodes, edges=edges, directed=False)
-    g.simplify()  # remove multi-edges and self-loops
+    g.simplify()
 
     rows = []
 
-    # Degree (k=1, motif_id=0)
     degrees = g.degree()
     for u, deg in enumerate(degrees):
         if deg > 0:
             rows.append((u, 1, 0, deg))
 
-    # Per-node triangle count: igraph triangles() returns number of triangles per vertex
-    tri_counts = g.triangles()  # number of triangles each vertex participates in
+    tri_counts = g.triangles()
     for u, tri in enumerate(tri_counts):
         deg = degrees[u]
         if tri > 0:
             rows.append((u, 3, MOTIF_TRIANGLE, tri))
-        # Wedges: open triads where u is the center
-        # = (deg choose 2) - triangles
         wedges = deg * (deg - 1) // 2 - tri
         if wedges > 0:
             rows.append((u, 3, MOTIF_WEDGE, wedges))
@@ -194,10 +181,11 @@ def _count_motifs_igraph_single(g_nx, num_nodes: int):
 # Output writers
 # ---------------------------------------------------------------------------
 
-def _write_planetoid_csv(rows, out_path: Path):
+def _write_planetoid_csv(rows, out_path: Path, topk: int):
     """Write node_motifs.csv for a Planetoid dataset."""
     out_path.parent.mkdir(parents=True, exist_ok=True)
     with open(out_path, "w", newline="") as f:
+        f.write(f"# motif_topk={topk}\n")
         writer = csv.writer(f)
         writer.writerow(["node_id", "k", "motif_id", "count"])
         for node_id, k, motif_id, count in sorted(rows, key=lambda r: (r[0], r[1], r[2])):
@@ -205,10 +193,11 @@ def _write_planetoid_csv(rows, out_path: Path):
     print(f"[OK] Wrote {len(rows)} rows to {out_path}")
 
 
-def _write_tu_csv(all_rows, out_path: Path):
+def _write_tu_csv(all_rows, out_path: Path, topk: int):
     """Write node_motifs.csv for a TU dataset (multi-graph)."""
     out_path.parent.mkdir(parents=True, exist_ok=True)
     with open(out_path, "w", newline="") as f:
+        f.write(f"# motif_topk={topk}\n")
         writer = csv.writer(f)
         writer.writerow(["graph_id", "node_id", "k", "motif_id", "count"])
         for graph_id, node_id, k, motif_id, count in sorted(
@@ -216,6 +205,100 @@ def _write_tu_csv(all_rows, out_path: Path):
         ):
             writer.writerow([graph_id, node_id, k, motif_id, count])
     print(f"[OK] Wrote {len(all_rows)} rows to {out_path}")
+
+
+# ---------------------------------------------------------------------------
+# Verify helper (calls verify_motifs logic inline)
+# ---------------------------------------------------------------------------
+
+def _run_verify(out_path: Path):
+    """Print quick stats for a freshly written CSV."""
+    try:
+        import pandas as pd
+    except ImportError:
+        print("[WARN] pandas not available; skipping --verify stats.")
+        return
+
+    print("\n[VERIFY] Quick stats:")
+    df = pd.read_csv(out_path, comment="#")
+    print(f"  rows={len(df)}, columns={list(df.columns)}")
+    if "count" in df.columns:
+        print(f"  count: min={df['count'].min()}, max={df['count'].max()}, "
+              f"mean={df['count'].mean():.2f}, std={df['count'].std():.2f}")
+    if "node_id" in df.columns:
+        print(f"  unique nodes: {df['node_id'].nunique()}")
+    if "graph_id" in df.columns:
+        print(f"  unique graphs: {df['graph_id'].nunique()}")
+    motif_ids = df["motif_id"].unique() if "motif_id" in df.columns else []
+    print(f"  motif_ids present: {sorted(motif_ids)}")
+
+
+# ---------------------------------------------------------------------------
+# Per-dataset runner
+# ---------------------------------------------------------------------------
+
+def _run_dataset(dataset: str, tool: str, root: Path, out_dir_override: Path | None,
+                 force: bool, verify: bool, topk: int):
+    out_dir = out_dir_override if out_dir_override else Path("data/precompute") / dataset
+    out_path = out_dir / "node_motifs.csv"
+
+    if out_path.exists() and not force:
+        print(f"[SKIP] {out_path} already exists. Use --force to recompute.")
+        return
+
+    t0 = time.perf_counter()
+
+    if dataset in PLANETOID_DATASETS:
+        print(f"[INFO] Loading Planetoid/{dataset} ...")
+        G_nx, num_nodes = _load_planetoid_as_nx(dataset, root)
+        print(f"[INFO] Graph: {num_nodes} nodes, {G_nx.number_of_edges()} edges")
+
+        if tool == "networkit":
+            print("[INFO] Counting motifs with NetworKit ...")
+            rows = _count_motifs_networkit(G_nx, num_nodes)
+        else:
+            if tool != "igraph":
+                print(f"[WARN] Unknown tool '{tool}', falling back to igraph.")
+            print("[INFO] Counting motifs with igraph ...")
+            from tqdm import tqdm
+            rows = _count_motifs_igraph_single(G_nx, num_nodes)
+
+        _write_planetoid_csv(rows, out_path, topk)
+
+    elif dataset in TU_DATASETS:
+        if tool == "networkit":
+            print(f"[WARN] NetworKit TU support is limited; falling back to igraph for {dataset}.")
+
+        print(f"[INFO] Loading TU/{dataset.upper()} ...")
+        graphs = _load_tu_graphs_as_nx(dataset, root)
+        print(f"[INFO] {len(graphs)} graphs loaded")
+
+        from tqdm import tqdm
+        all_rows = []
+        for graph_id, g_nx, num_nodes in tqdm(graphs, desc=f"  {dataset} graphs", unit="graph"):
+            per_node = _count_motifs_igraph_single(g_nx, num_nodes)
+            for node_id, k, motif_id, count in per_node:
+                all_rows.append((graph_id, node_id, k, motif_id, count))
+
+        _write_tu_csv(all_rows, out_path, topk)
+
+    else:
+        print(f"[ERROR] Unknown dataset: {dataset}")
+        sys.exit(1)
+
+    elapsed = time.perf_counter() - t0
+    print(f"Done in {elapsed:.1f}s")
+
+    if verify:
+        _run_verify(out_path)
+
+    print(f"\n[DONE] Motif CSV written to: {out_path}")
+    print("Next steps:")
+    print("  1. Run your experiment: python -m src.train.run --config configs/experiments/<dataset>_concat.yml")
+    print("  2. The motif_loader will auto-build motif_x.pt cache on first run.")
+    print()
+    print("HiPerXplorer swap: replace this script with a HiPerXplorer call that writes")
+    print("the same CSV columns. No changes needed in motif_loader.py or model code.")
 
 
 # ---------------------------------------------------------------------------
@@ -229,8 +312,8 @@ def main():
     parser.add_argument(
         "--dataset",
         required=True,
-        choices=sorted(PLANETOID_DATASETS | TU_DATASETS),
-        help="Dataset to compute motifs for.",
+        choices=sorted(PLANETOID_DATASETS | TU_DATASETS) + ["all"],
+        help="Dataset to compute motifs for, or 'all' to run every dataset.",
     )
     parser.add_argument(
         "--tool",
@@ -247,57 +330,48 @@ def main():
         default=None,
         help="Output directory override (default: data/precompute/<dataset>/).",
     )
+    parser.add_argument(
+        "--root",
+        default="data/processed",
+        help="Root directory for PyG dataset downloads (default: data/processed).",
+    )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Re-compute and overwrite CSV even if it already exists.",
+    )
+    parser.add_argument(
+        "--verify",
+        action="store_true",
+        help="After writing CSV, print quick sanity-check stats.",
+    )
+    parser.add_argument(
+        "--k",
+        "--topk",
+        dest="topk",
+        type=int,
+        default=10,
+        help="motif_topk value written as a header comment in the CSV (default: 10).",
+    )
     args = parser.parse_args()
 
-    dataset = args.dataset.lower()
-    out_dir = Path(args.out_dir) if args.out_dir else Path("data/precompute") / dataset
-    out_path = out_dir / "node_motifs.csv"
+    root = Path(args.root)
+    out_dir_override = Path(args.out_dir) if args.out_dir else None
+    datasets = ALL_DATASETS if args.dataset == "all" else [args.dataset.lower()]
 
-    if dataset in PLANETOID_DATASETS:
-        print(f"[INFO] Loading Planetoid/{dataset} ...")
-        G_nx, num_nodes = _load_planetoid_as_nx(dataset)
-        print(f"[INFO] Graph: {num_nodes} nodes, {G_nx.number_of_edges()} edges")
-
-        if args.tool == "networkit":
-            print("[INFO] Counting motifs with NetworKit ...")
-            rows = _count_motifs_networkit(G_nx, num_nodes)
-        else:
-            if args.tool != "igraph":
-                print(f"[WARN] Unknown tool '{args.tool}', falling back to igraph.")
-            print("[INFO] Counting motifs with igraph ...")
-            rows = _count_motifs_igraph_single(G_nx, num_nodes)
-
-        _write_planetoid_csv(rows, out_path)
-
-    elif dataset in TU_DATASETS:
-        if args.tool == "networkit":
-            print(f"[WARN] NetworKit TU support is limited; falling back to igraph for {dataset}.")
-
-        print(f"[INFO] Loading TU/{dataset.upper()} ...")
-        graphs = _load_tu_graphs_as_nx(dataset)
-        print(f"[INFO] {len(graphs)} graphs loaded")
-
-        all_rows = []
-        for graph_id, g_nx, num_nodes in graphs:
-            if graph_id % 100 == 0:
-                print(f"  ... processing graph {graph_id}/{len(graphs)}")
-            per_node = _count_motifs_igraph_single(g_nx, num_nodes)
-            for node_id, k, motif_id, count in per_node:
-                all_rows.append((graph_id, node_id, k, motif_id, count))
-
-        _write_tu_csv(all_rows, out_path)
-
-    else:
-        print(f"[ERROR] Unknown dataset: {dataset}")
-        sys.exit(1)
-
-    print(f"\n[DONE] Motif CSV written to: {out_path}")
-    print("Next steps:")
-    print("  1. Run your experiment: python -m src.train.run --config configs/experiments/<dataset>_concat.yml")
-    print("  2. The motif_loader will auto-build motif_x.pt cache on first run.")
-    print()
-    print("HiPerXplorer swap: replace this script with a HiPerXplorer call that writes")
-    print("the same CSV columns. No changes needed in motif_loader.py or model code.")
+    for ds in datasets:
+        print(f"\n{'='*60}")
+        print(f"  Dataset: {ds}")
+        print(f"{'='*60}")
+        _run_dataset(
+            dataset=ds,
+            tool=args.tool,
+            root=root,
+            out_dir_override=out_dir_override,
+            force=args.force,
+            verify=args.verify,
+            topk=args.topk,
+        )
 
 
 if __name__ == "__main__":

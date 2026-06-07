@@ -1,0 +1,10 @@
+dataset: cora
+variant: gat
+run_name: cora_gat
+train:
+  epochs: 200
+  patience: 50
+  seed: 42
+optim:
+  lr: 0.005
+  weight_decay: 0.0005

@@ -2,8 +2,7 @@
 from __future__ import annotations
 from dataclasses import dataclass
 from typing import Dict, Any
-import time
-from pathlib import Path
+from pathlib import Path  # FIX: removed unused `import time`
 
 
 import torch
@@ -113,7 +112,17 @@ def train_graph_task(model: nn.Module, dataset, splits: Dict[str, list], *,
         num_classes: int, patience: int = 50, monitor: str = 'val_acc',
         batch_size: int = 64, device: str = 'cpu') -> Dict[str, float]:
 
-    batch_size = int(batch_size) if (batch_size and batch_size > 0) else 64
+    # FIX: warn explicitly instead of silently defaulting to 64
+    if not batch_size or batch_size <= 0:
+        import warnings
+        warnings.warn(
+            f"train_graph_task: batch_size={batch_size} is invalid; defaulting to 64. "
+            "Set train.batch_size in your experiment YAML.",
+            UserWarning
+        )
+        batch_size = 64
+    else:
+        batch_size = int(batch_size)
 
     model.to(device)
     opt = Adam(model.parameters(), lr=lr, weight_decay=weight_decay)

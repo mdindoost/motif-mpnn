@@ -1,6 +1,8 @@
 # src/utils/config.py  (only the load_config and helpers changed)
 import copy
+import dataclasses
 import pathlib
+import warnings
 from dataclasses import dataclass, field
 from typing import Any, Dict, Optional
 import yaml
@@ -52,6 +54,22 @@ class ExperimentConfig:
     normalize: Dict[str, Any] = field(default_factory=dict)
     raw: Dict[str, Any] = field(default_factory=dict)
 
+# FIX: safe dataclass construction — filters unknown keys and warns instead of crashing
+def _safe_dataclass(cls, d: dict, section: str):
+    """Construct dataclass cls from dict d, warning about and dropping unknown keys."""
+    if not isinstance(d, dict):
+        return cls()
+    known = {f.name for f in dataclasses.fields(cls)}
+    extra = set(d.keys()) - known
+    if extra:
+        warnings.warn(
+            f"Config section '{section}' has unknown keys (will be ignored): {sorted(extra)}. "
+            f"Known fields: {sorted(known)}",
+            UserWarning, stacklevel=3
+        )
+    return cls(**{k: v for k, v in d.items() if k in known})
+
+
 def _deep_update(base: Dict[str, Any], upd: Dict[str, Any]) -> Dict[str, Any]:
     out = copy.deepcopy(base or {})
     for k, v in (upd or {}).items():
@@ -87,10 +105,11 @@ def load_config(path: str) -> ExperimentConfig:
 
     # ---- NESTED STYLE ----
     if isinstance(merged.get("dataset"), dict) and "name" in merged["dataset"]:
-        ds = DatasetConfig(**merged.get("dataset", {}))
-        md = ModelConfig(**merged.get("model", {}))
-        tr = TrainConfig(**merged.get("train", {}))
-        op = OptimConfig(**merged.get("optim", {}))
+        # FIX: use _safe_dataclass to warn about unknown keys instead of crashing
+        ds = _safe_dataclass(DatasetConfig, merged.get("dataset", {}), "dataset")
+        md = _safe_dataclass(ModelConfig, merged.get("model", {}), "model")
+        tr = _safe_dataclass(TrainConfig, merged.get("train", {}), "train")
+        op = _safe_dataclass(OptimConfig, merged.get("optim", {}), "optim")
         return ExperimentConfig(
             dataset=ds, model=md, train=tr, optim=op,
             run_name=merged.get("run_name", "dev"),
@@ -137,8 +156,9 @@ def load_config(path: str) -> ExperimentConfig:
 
     ds = DatasetConfig(name=ds_name, task=ds_task, root=ds_root)
     md = ModelConfig(name=model_name)
-    tr = TrainConfig(**(merged.get("train") or {}))
-    op = OptimConfig(**(merged.get("optim") or {}))
+    # FIX: use _safe_dataclass to warn about unknown keys instead of crashing
+    tr = _safe_dataclass(TrainConfig, merged.get("train") or {}, "train")
+    op = _safe_dataclass(OptimConfig, merged.get("optim") or {}, "optim")
 
     return ExperimentConfig(
         dataset=ds, model=md, train=tr, optim=op,
@@ -151,3 +171,44 @@ def load_config(path: str) -> ExperimentConfig:
         use_A_motif=merged.get("use_A_motif"),
         raw=merged
     )
+
+
+# FIX: known-value sets for validate_config
+KNOWN_VARIANTS = {"gcn", "sage", "gat", "concat", "gate", "mix", "identity"}
+KNOWN_DATASETS = {"cora", "citeseer", "pubmed", "proteins", "nci1", "enzymes"}
+GRAPH_DATASETS = {"proteins", "nci1", "enzymes"}
+NODE_DATASETS = {"cora", "citeseer", "pubmed"}
+
+
+def validate_config(exp: ExperimentConfig) -> None:
+    """Validate experiment config at startup. Raises ValueError for hard errors, warns for soft ones."""
+    errors = []
+
+    # Unknown variant
+    variant = exp.variant or exp.model.name
+    if variant not in KNOWN_VARIANTS:
+        errors.append(f"Unknown variant/model '{variant}'. Known: {sorted(KNOWN_VARIANTS)}")
+
+    # Unknown dataset
+    ds_name = exp.dataset.name
+    if ds_name not in KNOWN_DATASETS and ds_name != "dummy_node":
+        warnings.warn(f"Dataset '{ds_name}' is not a recognized benchmark dataset. "
+                      f"Known: {sorted(KNOWN_DATASETS)}", UserWarning)
+
+    # Task/dataset mismatch
+    expected_task = "graph" if ds_name in GRAPH_DATASETS else "node"
+    if ds_name in KNOWN_DATASETS and exp.dataset.task != expected_task:
+        errors.append(
+            f"Dataset '{ds_name}' expects task='{expected_task}' but config has task='{exp.dataset.task}'."
+        )
+
+    # Patience sanity
+    if exp.train.patience <= 0:
+        errors.append(f"train.patience must be > 0, got {exp.train.patience}")
+
+    # Monitor sanity
+    if exp.train.monitor not in ("val_acc", "val_macro_f1"):
+        errors.append(f"train.monitor must be 'val_acc' or 'val_macro_f1', got '{exp.train.monitor}'")
+
+    if errors:
+        raise ValueError("Config validation failed:\n" + "\n".join(f"  - {e}" for e in errors))

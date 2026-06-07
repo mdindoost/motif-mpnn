@@ -9,7 +9,7 @@ from src.utils.seed import fix_seed
 import pandas as pd
 import torch
 
-from src.utils.config import load_config
+from src.utils.config import load_config, validate_config
 from src.utils.registry import MODEL_REGISTRY, DATASET_REGISTRY
 
 # Ensure registries populate via import side-effects
@@ -21,10 +21,30 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", type=str, required=True,
                         help="Path to experiment YAML config")
+    parser.add_argument("--dry-run", action="store_true",
+                        help="Validate and print resolved config, then exit without training")
     args = parser.parse_args()
 
     exp = load_config(args.config)
+    validate_config(exp)  # FIX: validate config at startup before any work begins
     fix_seed(getattr(exp.train, "seed", 0))
+
+    # ---- Dry-run: print resolved config and exit immediately ----
+    if args.dry_run:
+        print("Resolved config:")
+        print(f"  dataset      : {exp.dataset.name}")
+        print(f"  variant      : {exp.variant or exp.model.name}")
+        print(f"  model        : {exp.model.name}")
+        print(f"  epochs       : {exp.train.epochs}")
+        print(f"  patience     : {exp.train.patience}")
+        print(f"  lr           : {exp.optim.lr}")
+        print(f"  weight_decay : {exp.optim.weight_decay}")
+        print(f"  monitor      : {exp.train.monitor}")
+        print(f"  seed         : {exp.train.seed}")
+        print(f"  save_dir     : {exp.save_dir}")
+        print(f"  config_path  : {os.path.abspath(args.config)}")
+        print("DRY RUN — no training will be performed")
+        raise SystemExit(0)
 
     print("[cfg]", {"dataset": exp.dataset.name, "model": exp.model.name, "variant": exp.variant})
 
@@ -48,13 +68,30 @@ def main():
     motif_dim = 0
     if task == "node" and getattr(dataset, "motif_x", None) is not None:
         motif_dim = int(dataset.motif_x.size(1))
+    elif task == "graph":  # FIX: read motif_dim from TUWithMotifs wrapper for graph tasks
+        ds_obj_inner = getattr(dataset, 'dataset', None)
+        if ds_obj_inner is not None and hasattr(ds_obj_inner, 'motif_dim'):
+            motif_dim = int(ds_obj_inner.motif_dim)
+
+    # FIX: warn if a motif variant is requested but no motif features were found
+    if exp.model.name in {"concat", "gate", "mix"} and motif_dim == 0:
+        import warnings
+        warnings.warn(
+            f"Running '{exp.model.name}' variant but motif_dim=0 — no motif CSV found for '{exp.dataset.name}'. "
+            f"Model will behave identically to plain GCN. Run scripts/preprocess/generate_motifs.py to generate motifs.",
+            UserWarning
+        )
 
     # ---------------- Model ----------------
     ModelCls = MODEL_REGISTRY.get(exp.model.name)
     model_kwargs = dict(
         in_dim=in_dim, out_dim=out_dim,
-        hidden_dim=64, num_layers=2, dropout=0.5,
-        layer_norm=True, residual=True, task=task,
+        hidden_dim=exp.model.hidden_dim,   # FIX: use config value, not hardcoded 64
+        num_layers=exp.model.num_layers,   # FIX: use config value, not hardcoded 2
+        dropout=exp.model.dropout,         # FIX: use config value, not hardcoded 0.5
+        layer_norm=exp.model.layer_norm,   # FIX: use config value, not hardcoded True
+        residual=exp.model.residual,       # FIX: use config value, not hardcoded True
+        task=task,
     )
     # Only pass motif_dim to motif-aware variants
     if exp.model.name in {"concat", "gate", "mix"}:
@@ -161,6 +198,36 @@ def main():
     best_val_epoch = final.pop('best_val_epoch', 'N/A')
     total_epochs = len(list(pd.read_csv(save_dir / 'metrics.csv').iterrows())) \
         if (save_dir / 'metrics.csv').exists() else 'N/A'
+
+    # ---------------- Task B: write run_result.json ----------------
+    run_ts = datetime.now().isoformat(timespec="seconds")
+    run_result = {
+        "dataset":        exp.dataset.name,
+        "variant":        exp.variant or exp.model.name,
+        "motif_dim":      motif_dim,
+        "test_acc":       final.get('test_acc', None),
+        "test_macro_f1":  final.get('test_macro_f1', None),
+        "best_val_epoch": best_val_epoch,
+        "total_epochs":   total_epochs,
+        "seed":           int(getattr(exp.train, 'seed', 0)),
+        "config_path":    os.path.abspath(args.config),
+        "timestamp":      run_ts,
+    }
+    with open(save_dir / "run_result.json", "w") as f:
+        json.dump(run_result, f, indent=2)
+
+    # ---------------- Task C: append to results/all_runs.csv ----------------
+    all_runs_path = Path(exp.save_dir).parent / "all_runs.csv"
+    # Ensure the parent directory exists (it should — save_dir was just created above)
+    all_runs_path.parent.mkdir(parents=True, exist_ok=True)
+    _CSV_COLUMNS = [
+        "timestamp", "config_path", "dataset", "variant", "motif_dim",
+        "test_acc", "test_macro_f1", "best_val_epoch", "total_epochs", "seed",
+    ]
+    row_df = pd.DataFrame([{col: run_result[col] for col in _CSV_COLUMNS}])
+    write_header = not all_runs_path.exists()
+    row_df.to_csv(all_runs_path, mode="a", header=write_header, index=False)
+
     print("\n" + "=" * 60)
     print("RUN SUMMARY")
     print("=" * 60)

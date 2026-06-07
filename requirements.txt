@@ -1,0 +1,17 @@
+# Core training dependencies
+# Install PyG extras separately: https://pytorch-geometric.readthedocs.io/en/latest/notes/installation.html
+#
+# NOTE: torch 2.4.1 was installed via conda (pytorch-cuda=12.1 channel).
+# If installing via pip use the matching wheel, e.g.:
+#   pip install torch==2.4.1+cu121 --index-url https://download.pytorch.org/whl/cu121
+# torch_scatter, torch_sparse, and torch_cluster are NOT currently installed in this env;
+# install them following the PyG installation guide linked above.
+
+torch==2.4.1
+torch-geometric==2.6.1
+pandas==2.3.2
+numpy==2.2.6
+PyYAML==6.0.2
+tqdm==4.67.1
+matplotlib==3.10.6
+scipy==1.15.2
