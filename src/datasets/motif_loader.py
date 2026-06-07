@@ -196,7 +196,7 @@ def build_or_load_tu_motif_list(dataset: str, pyg_dataset, precompute_dir: str |
 
 
     if cache_p.exists() and manifest_p.exists() and stats_p.exists():
-        lst = torch.load(cache_p)
+        lst = torch.load(cache_p, weights_only=False)
         stats = _read_json(stats_p) or {}
         manifest = _read_json(manifest_p) or {}
         return MotifArtifacts(X=None, stats=stats, manifest=manifest, X_list=lst)

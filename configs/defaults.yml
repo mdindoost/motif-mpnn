@@ -1,26 +1,23 @@
 run_name: dev
 save_dir: results/logs
 
-
 train:
-epochs: 200
-patience: 50
-seed: 0
-batch_size: 0
-
+  epochs: 200
+  patience: 50
+  seed: 0
+  batch_size: 0
+  monitor: val_acc
 
 optim:
-lr: 0.01
-weight_decay: 0.0
-
+  lr: 0.01
+  weight_decay: 0.0
 
 model:
-name: identity # placeholder; will become gcn/graphsage/gat in Phase D
-hidden_dim: 64
-num_layers: 2
-dropout: 0.5
-layer_norm: true
-residual: true
-
+  name: identity
+  hidden_dim: 64
+  num_layers: 2
+  dropout: 0.5
+  layer_norm: true
+  residual: true
 
 # dataset defaults are provided by each experiment file

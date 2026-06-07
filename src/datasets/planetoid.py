@@ -71,10 +71,26 @@ def _make_planetoid_splits(data, num_classes: int, seed: int) -> Dict[str, Tenso
     return {"train": train_mask, "val": val_mask, "test": test_mask}
 
 
-def _load_planetoid(name: str, root: str, split_seed: int = 42) -> NodeDatasetBundle:
+def _public_splits(data) -> Dict[str, Tensor]:
+    """Use the canonical Planetoid public splits shipped with the dataset.
+    These are required to reproduce numbers from Kipf & Welling (2017) and most GNN baselines.
+    WARNING: switching between use_public_split=True and False produces incomparable results.
+    """
+    return {
+        "train": data.train_mask,
+        "val": data.val_mask,
+        "test": data.test_mask,
+    }
+
+
+def _load_planetoid(name: str, root: str, split_seed: int = 42,
+                    use_public_split: bool = False) -> NodeDatasetBundle:
     ds = Planetoid(root=root, name=name.capitalize())  # 'Cora', 'Citeseer', 'Pubmed'
     data = ds[0]
-    splits = _make_planetoid_splits(data, ds.num_classes, split_seed)
+    if use_public_split:
+        splits = _public_splits(data)
+    else:
+        splits = _make_planetoid_splits(data, ds.num_classes, split_seed)
     return NodeDatasetBundle(
         pyg=ds,
         data=data,
@@ -87,8 +103,10 @@ def _load_planetoid(name: str, root: str, split_seed: int = 42) -> NodeDatasetBu
 @DATASET_REGISTRY.register("cora")
 class CoraDataset:
     task = "node"
-    def __init__(self, root: str = "data/processed", split_seed: int = 42, **kwargs: Any):
-        self.bundle = _load_planetoid("cora", root, split_seed=split_seed)
+    def __init__(self, root: str = "data/processed", split_seed: int = 42,
+                 use_public_split: bool = False, **kwargs: Any):
+        self.bundle = _load_planetoid("cora", root, split_seed=split_seed,
+                                      use_public_split=use_public_split)
         # convenient shortcuts
         self.data = self.bundle.data
         self.splits = self.bundle.splits
@@ -105,8 +123,10 @@ class CoraDataset:
 @DATASET_REGISTRY.register("citeseer")
 class CiteseerDataset:
     task = "node"
-    def __init__(self, root: str = "data/processed", split_seed: int = 42, **kwargs: Any):
-        self.bundle = _load_planetoid("citeseer", root, split_seed=split_seed)
+    def __init__(self, root: str = "data/processed", split_seed: int = 42,
+                 use_public_split: bool = False, **kwargs: Any):
+        self.bundle = _load_planetoid("citeseer", root, split_seed=split_seed,
+                                      use_public_split=use_public_split)
         self.data = self.bundle.data
         self.splits = self.bundle.splits
         self.num_features = self.bundle.num_features
@@ -121,8 +141,10 @@ class CiteseerDataset:
 @DATASET_REGISTRY.register("pubmed")
 class PubmedDataset:
     task = "node"
-    def __init__(self, root: str = "data/processed", split_seed: int = 42, **kwargs: Any):
-        self.bundle = _load_planetoid("pubmed", root, split_seed=split_seed)
+    def __init__(self, root: str = "data/processed", split_seed: int = 42,
+                 use_public_split: bool = False, **kwargs: Any):
+        self.bundle = _load_planetoid("pubmed", root, split_seed=split_seed,
+                                      use_public_split=use_public_split)
         self.data = self.bundle.data
         self.splits = self.bundle.splits
         self.num_features = self.bundle.num_features

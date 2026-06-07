@@ -17,6 +17,8 @@ class TrainConfig:
     patience: int = 50
     seed: int = 0
     batch_size: int = 0
+    # 'val_acc' for balanced datasets; 'val_macro_f1' for imbalanced (NCI1, ENZYMES)
+    monitor: str = "val_acc"
 
 @dataclass
 class ModelConfig:
@@ -32,6 +34,8 @@ class DatasetConfig:
     name: str = "dummy_node"
     task: str = "node"
     root: str = "data/processed"
+    # When True, use canonical Planetoid public splits for comparability with published baselines
+    use_public_split: bool = False
 
 @dataclass
 class ExperimentConfig:
@@ -126,13 +130,10 @@ def load_config(path: str) -> ExperimentConfig:
     if ds_task not in {"node", "graph"}:
         ds_task = _task_by_name(ds_name)
 
-    # Model selection: prefer explicit model.name; else use variant; else identity
-    model_block = merged.get("model")
-    model_name = None
-    if isinstance(model_block, dict):
-        model_name = model_block.get("name")
-    if not model_name:
-        model_name = merged.get("variant") or "identity"
+    # Model selection priority: variant > explicit model.name in experiment cfg > identity
+    # We check the raw experiment cfg (not merged) to avoid picking up the defaults placeholder.
+    explicit_model_block = cfg.get("model") if isinstance(cfg.get("model"), dict) else {}
+    model_name = (explicit_model_block.get("name") or merged.get("variant") or "identity")
 
     ds = DatasetConfig(name=ds_name, task=ds_task, root=ds_root)
     md = ModelConfig(name=model_name)

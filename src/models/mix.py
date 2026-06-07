@@ -1,4 +1,5 @@
 # src/models/mix.py
+import warnings
 from typing import Any, Optional
 import torch
 from torch import nn
@@ -40,27 +41,36 @@ def _motif_edge_sim(motif_x: torch.Tensor,
         raise ValueError(f"Unknown sim_metric: {metric}")
 
     if topk is not None and topk > 0:
-        # keep top-k per source node
-        # gather edges per src node
+        # Vectorized per-source topk — O(E log E) via two stable sorts; no Python loop.
+        # SCALING NOTE: the old implementation used `for u in torch.unique(src)` which is
+        # O(N) Python loop and stalls on large batched TU graphs. This replaces it.
         E = s.size(0)
-        # sort indices per source by score
-        # We'll do a scatter-topk: for each src node, keep the k edges with largest s
         device = s.device
-        N = int(torch.max(src).item()) + 1 if src.numel() > 0 else 0
-        keep = torch.zeros(E, dtype=torch.bool, device=device)
-        # group by src using sorting trick
-        order = torch.argsort(src * (E + 1) + (1.0 - s).argsort(descending=False), stable=True)
-        # A simpler, robust approach: for each node, select topk edges via mask
-        # Implement with per-node pass (OK for Planetoid sizes)
-        for u in torch.unique(src):
-            idx = (src == u).nonzero(as_tuple=False).view(-1)
-            if idx.numel() <= topk:
-                keep[idx] = True
-            else:
-                # topk on s[idx]
-                vals, pos = torch.topk(s[idx], k=topk, largest=True)
-                keep[idx[pos]] = True
-        s = s * keep.float()
+        if E > 0:
+            # Lexicographic sort: (src ASC, s DESC)
+            # Step 1: sort by s descending (stable)
+            perm1 = torch.argsort(s, descending=True, stable=True)
+            # Step 2: stable sort by src; within same src, order from step 1 is preserved
+            perm2 = torch.argsort(src[perm1], stable=True)
+            perm = perm1[perm2]  # edges in (src ASC, s DESC) order
+
+            sorted_src = src[perm]
+            # True at each position where a new source group begins
+            boundaries = torch.cat([
+                torch.ones(1, dtype=torch.bool, device=device),
+                sorted_src[1:] != sorted_src[:-1],
+            ])
+            # group_id[i] = which source group position i belongs to
+            group_id = boundaries.long().cumsum(0) - 1
+            # position of first edge in each group (the boundary positions)
+            group_start_pos = boundaries.nonzero(as_tuple=False).view(-1)
+            # within-group rank: 0 = best score in group, 1 = second best, ...
+            within_rank = torch.arange(E, device=device) - group_start_pos[group_id]
+
+            keep_sorted = within_rank < topk
+            keep = torch.zeros(E, dtype=torch.bool, device=device)
+            keep[perm] = keep_sorted
+            s = s * keep.float()
 
     return s.clamp(0.0, 1.0)
 
@@ -102,11 +112,17 @@ class MixGCN(nn.Module):
 
         self.act = nn.ReLU()
         self.head = MLPHead(dims[-1], out_dim)
-
-        # if no motif features, this model gracefully falls back to GCN (lambda effective = 0)
+        self._warned_no_motif = False
 
     def _mixed_edge_weight(self, data):
         if not hasattr(data, "motif_x") or data.motif_x is None or data.motif_x.numel() == 0:
+            if not self._warned_no_motif:
+                warnings.warn(
+                    "MixGCN: data.motif_x is absent — running as plain GCN (lambda_mix has no effect). "
+                    "Provide a node_motifs.csv under data/precompute/<dataset>/ to enable adjacency mixing.",
+                    UserWarning, stacklevel=3
+                )
+                self._warned_no_motif = True
             return None  # behaves like standard GCN
         s = _motif_edge_sim(data.motif_x, data.edge_index, metric=self.sim_metric, topk=self.motif_topk)
         # Blend with structural weight=1.0

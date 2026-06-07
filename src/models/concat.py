@@ -1,4 +1,5 @@
 # src/models/concat.py
+import warnings
 from typing import Any
 import torch
 from torch import nn
@@ -15,17 +16,26 @@ class ConcatModel(nn.Module):
         self.encoder = GCN(in_dim=enc_in, out_dim=out_dim, **kwargs)
         self.task = kwargs.get("task", "node")
         self.motif_dim = motif_dim
+        self._warned_no_motif = False
 
     def forward(self, data):
-        if self.task == "node":
-            x = data.x
-            if hasattr(data, "motif_x") and data.motif_x is not None and data.motif_x.numel() > 0:
-                x = torch.cat([x, data.motif_x.to(x.device, dtype=x.dtype)], dim=1)
-            proxy = type("Obj", (), {"x": x, "edge_index": data.edge_index, "batch": getattr(data, "batch", None)})
-            return self.encoder.forward(proxy)
-        else:
-            # TU graph task: we’ll attach per-graph motif_x in Phase C.1
-            return self.encoder(data)
+        x = data.x
+        has_motif = hasattr(data, "motif_x") and data.motif_x is not None and data.motif_x.numel() > 0
+        if self.motif_dim > 0 and not has_motif and not self._warned_no_motif:
+            warnings.warn(
+                "ConcatModel: motif_dim > 0 but data.motif_x is absent — running as plain GCN. "
+                "Provide a node_motifs.csv under data/precompute/<dataset>/ to enable motif features.",
+                UserWarning, stacklevel=2
+            )
+            self._warned_no_motif = True
+        if has_motif:
+            x = torch.cat([x, data.motif_x.to(x.device, dtype=x.dtype)], dim=1)
+        # pad to expected input dim if motif features are absent but model was built with motif_dim
+        elif self.motif_dim > 0:
+            pad = torch.zeros(x.size(0), self.motif_dim, device=x.device, dtype=x.dtype)
+            x = torch.cat([x, pad], dim=1)
+        proxy = type("Obj", (), {"x": x, "edge_index": data.edge_index, "batch": getattr(data, "batch", None)})
+        return self.encoder.forward(proxy)
 
 @MODEL_REGISTRY.register("concat")
 class ConcatFactory:

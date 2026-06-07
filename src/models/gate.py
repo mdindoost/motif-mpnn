@@ -1,4 +1,5 @@
 # src/models/gate.py
+import warnings
 from typing import Any, Optional
 import torch
 from torch import nn
@@ -61,6 +62,7 @@ class GatedGCN(nn.Module):
 
         self.edge_gate = EdgeGate(motif_dim, hidden=gate_hidden, dropout=gate_dropout, tau=gate_temp) \
                          if motif_dim > 0 else None
+        self._warned_no_motif = False
 
         self.act = nn.ReLU()
         self.head = MLPHead(dims[-1], out_dim)
@@ -76,7 +78,15 @@ class GatedGCN(nn.Module):
 
     def forward(self, data):
         gate = None
-        if self.edge_gate is not None and hasattr(data, "motif_x") and data.motif_x is not None:
+        has_motif = hasattr(data, "motif_x") and data.motif_x is not None and data.motif_x.numel() > 0
+        if self.edge_gate is not None and not has_motif and not self._warned_no_motif:
+            warnings.warn(
+                "GatedGCN: motif_dim > 0 but data.motif_x is absent — running as plain GCN (all gates=1). "
+                "Provide a node_motifs.csv under data/precompute/<dataset>/ to enable edge gating.",
+                UserWarning, stacklevel=2
+            )
+            self._warned_no_motif = True
+        if self.edge_gate is not None and has_motif:
             gate = self.edge_gate(data.motif_x, data.edge_index)  # [E]
         if self.task == "node":
             x = self.encode(data.x, data.edge_index, edge_weight=gate)

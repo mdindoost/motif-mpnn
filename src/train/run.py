@@ -6,6 +6,7 @@ from datetime import datetime
 from pathlib import Path
 from src.utils.seed import fix_seed
 
+import pandas as pd
 import torch
 
 from src.utils.config import load_config
@@ -29,7 +30,8 @@ def main():
 
     # ---------------- Dataset ----------------
     DatasetCls = DATASET_REGISTRY.get(exp.dataset.name)
-    dataset = DatasetCls(root=exp.dataset.root)
+    dataset = DatasetCls(root=exp.dataset.root,
+                         use_public_split=getattr(exp.dataset, 'use_public_split', False))
 
     # Infer dims + task from dataset bundle
     if getattr(dataset, "task", "node") == "node":
@@ -120,7 +122,8 @@ def main():
 
     # ---------------- Phase E: training ----------------
     epochs = int(getattr(exp.train, 'epochs', 200))
-    patience = int(getattr(exp.train, 'patience', 50))  # used by EarlyStopper default
+    patience = int(getattr(exp.train, 'patience', 50))
+    monitor = str(getattr(exp.train, 'monitor', 'val_acc'))
     lr = float(getattr(exp.optim, 'lr', 0.01))
     wd = float(getattr(exp.optim, 'weight_decay', 0.0))
 
@@ -129,7 +132,7 @@ def main():
     batch_size = raw_bs if (task == "node" or raw_bs > 0) else 64
 
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
-    print(f"Training on {device} for up to {epochs} epochs (patience={patience})...")
+    print(f"Training on {device} for up to {epochs} epochs (patience={patience}, monitor={monitor})...")
 
     from src.train.engine import train_node_task, train_graph_task
 
@@ -142,7 +145,8 @@ def main():
             dataset.data.motif_x = dataset.motif_x
         final = train_node_task(model, dataset.data, masks,
                                 epochs=epochs, lr=lr, weight_decay=wd,
-                                save_dir=save_dir, num_classes=out_dim, device=device)
+                                save_dir=save_dir, num_classes=out_dim,
+                                patience=patience, monitor=monitor, device=device)
     else:
         splits = getattr(dataset, 'splits', None)
         ds_obj = getattr(dataset, 'dataset', None)
@@ -151,9 +155,24 @@ def main():
         final = train_graph_task(model, ds_obj, splits,
                                  epochs=epochs, lr=lr, weight_decay=wd,
                                  save_dir=save_dir, num_classes=out_dim,
+                                 patience=patience, monitor=monitor,
                                  batch_size=batch_size, device=device)
 
-    print('Final test:', final)
+    best_val_epoch = final.pop('best_val_epoch', 'N/A')
+    total_epochs = len(list(pd.read_csv(save_dir / 'metrics.csv').iterrows())) \
+        if (save_dir / 'metrics.csv').exists() else 'N/A'
+    print("\n" + "=" * 60)
+    print("RUN SUMMARY")
+    print("=" * 60)
+    print(f"  dataset      : {exp.dataset.name}")
+    print(f"  variant      : {exp.variant or exp.model.name}")
+    print(f"  motif_dim    : {motif_dim}")
+    print(f"  test_acc     : {final.get('test_acc', 'N/A'):.4f}" if isinstance(final.get('test_acc'), float) else f"  test_acc     : {final.get('test_acc', 'N/A')}")
+    print(f"  test_f1      : {final.get('test_macro_f1', 'N/A'):.4f}" if isinstance(final.get('test_macro_f1'), float) else f"  test_f1      : {final.get('test_macro_f1', 'N/A')}")
+    print(f"  best_val_ep  : {best_val_epoch}")
+    print(f"  total_epochs : {total_epochs}")
+    print(f"  run_dir      : {save_dir}")
+    print("=" * 60)
 
 
 if __name__ == "__main__":
