@@ -138,23 +138,22 @@ def load_config(path: str) -> ExperimentConfig:
         # Last resort: don't crash; make it explicit in run manifest
         ds_name = "dummy_node"
 
-    ds_task = "node"
     ds_root = "data/processed"
-    # Respect optional hints in flat dict
+    # FIX: always infer task from known dataset name first; explicit YAML hint overrides
+    ds_task = _task_by_name(ds_name)
     if isinstance(flat_ds, dict):
-        ds_task = flat_ds.get("task", ds_task)
         ds_root = flat_ds.get("root", ds_root)
-    # Or infer task by known dataset name
-    ds_task = ds_task or _task_by_name(ds_name)
-    if ds_task not in {"node", "graph"}:
-        ds_task = _task_by_name(ds_name)
+        if flat_ds.get("task") in {"node", "graph"}:
+            ds_task = flat_ds["task"]
 
     # Model selection priority: variant > explicit model.name in experiment cfg > identity
     # We check the raw experiment cfg (not merged) to avoid picking up the defaults placeholder.
     explicit_model_block = cfg.get("model") if isinstance(cfg.get("model"), dict) else {}
     model_name = (explicit_model_block.get("name") or merged.get("variant") or "identity")
 
-    ds = DatasetConfig(name=ds_name, task=ds_task, root=ds_root)
+    # FIX: read use_public_split from top-level flat-style YAML key
+    use_public_split_flag = bool(merged.get("use_public_split", False))
+    ds = DatasetConfig(name=ds_name, task=ds_task, root=ds_root, use_public_split=use_public_split_flag)
     md = ModelConfig(name=model_name)
     # FIX: use _safe_dataclass to warn about unknown keys instead of crashing
     tr = _safe_dataclass(TrainConfig, merged.get("train") or {}, "train")

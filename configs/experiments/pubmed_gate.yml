@@ -10,3 +10,4 @@ optim:
   weight_decay: 0.0
 # (no gate block → uses defaults: hidden=64, temp=1.0, dropout=0.0)
 
+use_public_split: true

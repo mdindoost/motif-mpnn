@@ -246,7 +246,7 @@ All motif-aware variants (concat, gate, mix) accept `motif_dim=0` and behave ide
 | `nci1` | graph | TU | `data/precompute/nci1/node_motifs.csv` |
 | `enzymes` | graph | TU | `data/precompute/enzymes/node_motifs.csv` |
 
-TU datasets (proteins/nci1/enzymes) use stratified train/val/test splits. TU downloads may be blocked by network policies; use `scripts/preprocess/download_datasets.py` to pre-download if needed.
+TU datasets (proteins/nci1/enzymes) use **stratified 60/20/20** (train/val/test) splits, seeded per training run (split_seed = train.seed). Planetoid datasets use canonical public splits (`use_public_split: true`). **Any random split in this repo is always 60/20/20 stratified seeded.** TU downloads may be blocked by network policies; use `scripts/preprocess/download_datasets.py` to pre-download if needed.
 
 ---
 
@@ -295,9 +295,11 @@ First line may be a comment `# motif_topk=N` (skipped by `comment="#"` in pandas
 
 | k | motif_id | meaning |
 |---|----------|---------|
-| 1 | 0 | degree (number of neighbors) |
-| 3 | 2 | wedge (open path of length 2) |
-| 3 | 3 | triangle (3-clique) |
+| 1 | 0 | degree (number of undirected neighbors) |
+| 3 | 2 | wedge (node is endpoint of open path of length 2) |
+| 3 | 3 | triangle (node participates in a 3-clique) |
+
+motif_id values 2 and 3 match igraph's `motifs_undirected()` isomorphism class numbering for 3-node connected undirected subgraphs. **This convention is finalized — all datasets use undirected igraph IDs.** Do not mix with directed motif IDs.
 
 ### Normalization
 
@@ -338,19 +340,58 @@ Prints per-column stats (min, max, mean, std, all-zero node count). `--plot` sav
 
 ## 9. Experiment Results
 
-Results are written per-run to `results/logs/<timestamp>_<run_name>/run_result.json` and appended to `results/all_runs.csv`.
+Results are written per-run to `results/logs/<timestamp>_<run_name>/run_result.json` and appended to `results/all_runs.csv`. Full findings and the LaTeX summary table are in `results/findings.md` and `results/tables/summary_table.tex`.
 
-| dataset | variant | test_acc | test_f1 | seed | split | notes |
-|---------|---------|----------|---------|------|-------|-------|
-| | | | | | | |
+**Run inventory (2026-06-07):** 105 unique runs — 87 main (6 datasets × up to 7 variants × 3 seeds) + 18 rand_concat ablation (6 datasets × 3 seeds). Seeds: 42, 0, 1. Planetoid: public splits. TU: stratified 60/20/20 (seed=train_seed). motif_dim=3 for all motif-aware variants.
 
-*(Fill in results here as runs are completed. Always note seed, split type (seeded vs public), and motif_dim.)*
+### Summary: Test Accuracy (mean ± std, N=3 seeds)
 
-**Historical results** (pre-rewrite, seeded splits, seed=42, hidden=64, 2-layer GCN backbone, 2026-06-06): see `results/tables/planetoid_results_seed42.csv`. Cora GCN: 0.756/0.743. PROTEINS GCN: 0.741/0.705 (after backward-pass bugfix from 0.714).
+| Dataset  | Task  | GCN           | SAGE          | GAT           | Concat        | Gate          | Mix           | Rand-Concat   |
+|----------|-------|---------------|---------------|---------------|---------------|---------------|---------------|---------------|
+| Cora     | node  | 0.785 ± 0.004 | 0.779 ± 0.014 | 0.800 ± 0.007 | 0.778 ± 0.018 | **0.797** ± 0.013 | 0.777 ± 0.002 | 0.785 ± 0.003 |
+| Citeseer | node  | 0.664 ± 0.006 | 0.659 ± 0.022 | 0.679 ± 0.008 | 0.663 ± 0.011 | 0.648 ± 0.033 | **0.675** ± 0.008 | 0.671 ± 0.005 |
+| Pubmed   | node  | 0.753 ± 0.012 | 0.739 ± 0.008 | —             | **0.760** ± 0.001 | 0.746 ± 0.005 | 0.744 ± 0.009 | 0.727 ± 0.006 |
+| PROTEINS | graph | 0.695 ± 0.022 | —             | —             | **0.728** ± 0.023 | 0.713 ± 0.017 | 0.706 ± 0.010 | 0.653 ± 0.005 |
+| NCI1     | graph | 0.674 ± 0.009 | —             | —             | **0.731** ± 0.018 | 0.692 ± 0.011 | 0.691 ± 0.003 | 0.665 ± 0.010 |
+| ENZYMES  | graph | 0.264 ± 0.043 | —             | —             | **0.311** ± 0.027 | 0.308 ± 0.022 | 0.286 ± 0.039 | 0.272 ± 0.067 |
+
+Bold = best motif-aware result per dataset.
+
+### Key findings
+
+1. **Graph classification**: All three motif variants improve over GCN on all TU datasets. Largest gains: NCI1 concat +5.8%, ENZYMES concat +4.7%, PROTEINS concat +3.3%.
+2. **Ablation validates graph-task signal**: Rand-Concat is *worse* than GCN on PROTEINS (−4.2%) and NCI1 (−0.9%), confirming gains come from motif structure, not extra feature dimensions.
+3. **Node classification is mixed**: Modest gains exist (Cora gate +1.2%, Citeseer mix +1.2%, Pubmed concat +0.8%), but Cora/Citeseer Rand-Concat matches or exceeds Concat — capacity confound not ruled out. Pubmed concat is clean (real > random by 3.3%).
+4. **Concat is the most consistent variant**: Best or tied-best across 4/6 datasets, lowest variance on Pubmed (std=0.001).
+5. **Citeseer gate is unstable**: std=0.033 (above 0.03 node-task threshold) — exclude from main table.
+
+**Historical results** (pre-rewrite, seeded splits, seed=42, 2026-06-06): Cora GCN: 0.756/0.743. PROTEINS GCN: 0.741/0.705. These used directed motif IDs and are not comparable to current results.
 
 ---
 
-## 10. Known Limitations / Open Questions
+## 10. Known Bugs Fixed
+
+All bugs below were identified and fixed during the 2026-06-06/07 audit.
+
+| # | Bug | Impact if unfixed | Fix location |
+|---|-----|-------------------|--------------|
+| 1 | `backward()` called outside `for batch in train_loader` loop | Only the last batch's gradients were used; all earlier batches discarded — training was effectively broken for graph tasks | `engine.py:train_graph_task` |
+| 2 | `EarlyStopper` always used `patience=50` hardcoded | Config `train.patience` was silently ignored; no way to tune stopping | `engine.py:EarlyStopper` |
+| 3 | Concat model silently ignored `motif_x` for graph task | Motif features were never used for graph classification even when CSV existed | `models/concat.py` |
+| 4 | `torch.load()` missing `weights_only=False` | FutureWarning became an error in PyTorch 2.x; TU motif cache never loaded | `datasets/motif_loader.py` |
+| 5 | Motif fallback was silent (no warning) | User couldn't tell if motif CSV was missing; model silently ran as GCN | `models/concat.py`, `gate.py`, `mix.py` |
+| 6 | `monitor` metric not configurable | val_acc was always used as EarlyStopper criterion; `val_macro_f1` option had no effect | `engine.py`, `config.py` |
+| 7 | Planetoid had no public-split support | Couldn't reproduce Kipf & Welling (2017) canonical splits; comparisons to published results were invalid | `datasets/planetoid.py` |
+| 8 | `defaults.yml` indentation broke flat-style config loading | `model.name: identity` from defaults shadowed `variant: gcn` from experiment files after indentation fix | `utils/config.py:load_config` |
+| 9 | `model_kwargs` used hardcoded values (hidden=64, layers=2, dropout=0.5) | Config changes to these fields had no effect | `train/run.py` |
+| 10 | `batch_size` invalid value silently defaulted to 64 | Misconfigured batch size was hidden; no way to detect the problem | `engine.py:train_graph_task` |
+| 11 | Flat-style config loader defaulted `ds_task="node"` for all datasets | All TU (graph-task) experiment configs failed `validate_config()` with task mismatch; PROTEINS/NCI1/ENZYMES were completely broken | `utils/config.py:load_config` |
+| 12 | igraph `g.triangles()` API missing in igraph 1.x | `generate_motifs.py` crashed at import for all datasets | `scripts/preprocess/generate_motifs.py` |
+| 13 | Existing cora/citeseer motif CSVs used directed motif IDs (2,9,11) | Features from old and new CSVs were incomparable; mixing would silently corrupt experiments | Old CSVs deleted; all 6 datasets regenerated with undirected IDs |
+
+---
+
+## 11. Known Limitations / Open Questions
 
 **Hardlines (do not change without strong reason):**
 - EarlyStopper patience must come from config — never hardcode it in `engine.py`.
@@ -359,23 +400,25 @@ Results are written per-run to `results/logs/<timestamp>_<run_name>/run_result.j
 - Do not compare results across different `split_seed` values without noting it explicitly.
 
 **Open questions:**
-1. **Directed vs undirected motif IDs**: existing Cora/Citeseer CSVs use directed 3-node motif IDs; `generate_motifs.py` uses undirected igraph IDs. Results from the two schemes are NOT comparable. Commit to one convention before the paper.
+1. **~~Directed vs undirected motif IDs~~**: RESOLVED (2026-06-07). Standardized on undirected igraph IDs (0=degree, 2=wedge, 3=triangle). All CSVs regenerated. Old directed CSVs deleted.
 2. **Public vs seeded splits for the main paper table**: use `use_public_split: true` for direct comparability with published baselines (Kipf & Welling 2017); use seeded splits for multi-seed ablations. Do not mix.
 3. **EarlyStopper metric for imbalanced TU datasets**: NCI1 and ENZYMES may benefit from `monitor: val_macro_f1`. Test by adding this to those experiment YAMLs.
 4. **Mix topk correctness**: the vectorized scatter-topk replaces an O(N) loop. Verify on a small example before large-scale runs.
 5. **No multi-GPU support** — training is single-device (CPU or one GPU).
 
 **Not done yet:**
-- No motif CSVs for any TU dataset (proteins/nci1/enzymes) — run `generate_motifs.py --dataset proteins --tool igraph` to generate.
-- No pubmed motif CSV.
-- No multi-seed sweep results — only single seed=42 runs exist.
-- No experiment configs for GAT.
-- Motif-Mix for graph tasks not yet tested with motif CSVs.
+- ~~No multi-seed sweep results~~: DONE (2026-06-07) — 105 unique runs across seeds {42, 0, 1}.
+- GAT configs exist only for Cora and Citeseer; Pubmed/TU GAT configs missing.
+- SAGE configs exist only for Planetoid datasets; TU SAGE configs missing.
+- ~~Motif-Mix for graph tasks not yet tested~~: DONE — all TU (mix, gate, concat) runs complete.
+- `sweep.py` does not support `--group paper-core` yet.
+- Social datasets (IMDB-B, IMDB-M, REDDIT-B) not registered in DATASET_REGISTRY.
+- Large-scale dataset (ogbn-arxiv) not registered in DATASET_REGISTRY.
 - HiPerXplorer not connected.
 
 ---
 
-## 11. Git Rules
+## 12. Git Rules
 
 - `git add` specific files only — never `git add -A` or `git add .` (risk of committing `data/` files).
 - `data/` is gitignored; motif CSVs and `.pt` caches must never be committed.
@@ -383,6 +426,6 @@ Results are written per-run to `results/logs/<timestamp>_<run_name>/run_result.j
 
 ---
 
-## 12. HiPerXplorer Integration Plan
+## 13. HiPerXplorer Integration Plan
 
 When HiPerXplorer (Chapel/Arkouda parallel motif counter) is ready, replace only the counting logic in `scripts/preprocess/generate_motifs.py` — specifically the `_count_motifs_networkit` and `_count_motifs_igraph_single` functions — with a single call to the HiPerXplorer CLI or Python API. The output CSV format (Planetoid: `node_id,k,motif_id,count`; TU: `graph_id,node_id,k,motif_id,count`) must remain identical so that `motif_loader.py` and all model code require zero changes. After swapping the backend, delete the cached `.pt` files under `data/precompute/` so the loader rebuilds from the new CSV.

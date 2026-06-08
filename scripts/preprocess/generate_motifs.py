@@ -16,10 +16,18 @@ requires zero changes downstream:
     data/precompute/<dataset>/node_motifs.csv
     columns: graph_id, node_id, k, motif_id, count
 
-MOTIF ID SCHEME (undirected, matches igraph motifs_undirected for k=3):
-  k=1, motif_id=0 : degree (number of neighbors)
-  k=3, motif_id=2 : wedge  (node participates in an open path of length 2)
+MOTIF CONVENTION (ALL DATASETS — UNDIRECTED):
+All features use UNDIRECTED k=3 subgraph counts (igraph convention).
+  k=1, motif_id=0 : degree   (number of undirected neighbors)
+  k=3, motif_id=2 : wedge    (node is endpoint of an open path of length 2)
   k=3, motif_id=3 : triangle (node participates in a 3-clique)
+
+motif_id values 2 and 3 match igraph's motifs_undirected() isomorphism class
+numbering for 3-node connected undirected subgraphs. Class 0 = single edge +
+isolated, class 1 = path of 3 nodes, class 2 = wedge/path-of-2, class 3 = triangle.
+
+HiPerXplorer swap: ensure HiPerXplorer output uses the same (k, motif_id) pairs
+so that motif_loader.py requires no changes.
 
 Usage:
   python scripts/preprocess/generate_motifs.py --dataset cora --tool networkit
@@ -158,16 +166,24 @@ def _count_motifs_igraph_single(g_nx, num_nodes: int):
     g = ig.Graph(n=num_nodes, edges=edges, directed=False)
     g.simplify()
 
-    rows = []
+    import collections
 
+    rows = []
     degrees = g.degree()
     for u, deg in enumerate(degrees):
         if deg > 0:
             rows.append((u, 1, 0, deg))
 
-    tri_counts = g.triangles()
-    for u, tri in enumerate(tri_counts):
+    # igraph 1.x API: list_triangles() returns list of (a, b, c) vertex triples
+    tri_per_node = collections.Counter()
+    for a, b, c in g.list_triangles():
+        tri_per_node[a] += 1
+        tri_per_node[b] += 1
+        tri_per_node[c] += 1
+
+    for u in range(num_nodes):
         deg = degrees[u]
+        tri = tri_per_node.get(u, 0)
         if tri > 0:
             rows.append((u, 3, MOTIF_TRIANGLE, tri))
         wedges = deg * (deg - 1) // 2 - tri

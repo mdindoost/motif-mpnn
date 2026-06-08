@@ -117,7 +117,7 @@ def build_or_load_node_motif_X(dataset: str, num_nodes: int, precompute_dir: str
         return MotifArtifacts(X=X, stats=stats, manifest=manifest)
 
 
-    df = pd.read_csv(csv_p)
+    df = pd.read_csv(csv_p, comment="#")  # FIX: skip motif_topk header comment
     required_cols = {"node_id","motif_id","k","count"}
     if not required_cols.issubset(set(df.columns)):
         missing = required_cols - set(df.columns)
@@ -201,7 +201,7 @@ def build_or_load_tu_motif_list(dataset: str, pyg_dataset, precompute_dir: str |
         manifest = _read_json(manifest_p) or {}
         return MotifArtifacts(X=None, stats=stats, manifest=manifest, X_list=lst)
     
-    df = pd.read_csv(csv_p)
+    df = pd.read_csv(csv_p, comment="#")  # FIX: skip motif_topk header comment
     required_cols = {"graph_id","node_id","motif_id","k","count"}
     if not required_cols.issubset(set(df.columns)):
         missing = required_cols - set(df.columns)

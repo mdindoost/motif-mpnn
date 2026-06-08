@@ -1,0 +1,52 @@
+% Motif-MPNN Results: Test Accuracy (mean ± std, N=3 seeds)
+% Seeds: 42, 0, 1
+% Planetoid: public Kipf & Welling splits (use_public_split=True)
+% TU datasets: stratified 60/20/20 (seed=train_seed)
+% Motif features: degree + wedge + triangle (igraph undirected, motif_dim=3)
+% Rand-Concat: concat architecture with randomized motif features (ablation)
+% Generated: 2026-06-07 from results/all_runs.csv (105 unique runs)
+
+\begin{table}[t]
+\centering
+\caption{Test accuracy (mean $\pm$ std over 3 seeds). Best motif-aware result per dataset in \textbf{bold}. Dashes indicate configs not run. $\dagger$ Published TU numbers use 10-fold CV; our single 60/20/20 split comparison is not direct.}
+\label{tab:main_results}
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{llccccccc}
+\toprule
+\textbf{Dataset} & \textbf{Task} & \textbf{GCN} & \textbf{SAGE} & \textbf{GAT} & \textbf{Concat} & \textbf{Gate} & \textbf{Mix} & \textbf{Rand-Concat} \\
+\midrule
+\multicolumn{9}{l}{\textit{Node classification (Planetoid, public splits)}} \\
+Cora      & node  & $0.785\pm0.004$ & $0.779\pm0.014$ & $0.800\pm0.007$ & $0.778\pm0.018$ & $\mathbf{0.797}\pm0.013$ & $0.777\pm0.002$ & $0.785\pm0.003$ \\
+Citeseer  & node  & $0.664\pm0.006$ & $0.659\pm0.022$ & $0.679\pm0.008$ & $0.663\pm0.011$ & $0.648\pm0.033$ & $\mathbf{0.675}\pm0.008$ & $0.671\pm0.005$ \\
+Pubmed    & node  & $0.753\pm0.012$ & $0.739\pm0.008$ & ---             & $\mathbf{0.760}\pm0.001$ & $0.746\pm0.005$ & $0.744\pm0.009$ & $0.727\pm0.006$ \\
+\midrule
+\multicolumn{9}{l}{\textit{Graph classification (TU datasets, 60/20/20 stratified split$^\dagger$)}} \\
+PROTEINS  & graph & $0.695\pm0.022$ & ---             & ---             & $\mathbf{0.728}\pm0.023$ & $0.713\pm0.017$ & $0.706\pm0.010$ & $0.653\pm0.005$ \\
+NCI1      & graph & $0.674\pm0.009$ & ---             & ---             & $\mathbf{0.731}\pm0.018$ & $0.692\pm0.011$ & $0.691\pm0.003$ & $0.665\pm0.010$ \\
+ENZYMES   & graph & $0.264\pm0.043$ & ---             & ---             & $\mathbf{0.311}\pm0.027$ & $0.308\pm0.022$ & $0.286\pm0.039$ & $0.272\pm0.067$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+% Supplementary: delta over GCN baseline
+\begin{table}[t]
+\centering
+\caption{$\Delta$ test accuracy relative to GCN baseline (mean, N=3 seeds). Positive = improvement. Rand-Concat uses randomized motif features to isolate the contribution of motif content vs.\ extra feature dimensions.}
+\label{tab:delta_results}
+\setlength{\tabcolsep}{5pt}
+\begin{tabular}{llcccc}
+\toprule
+\textbf{Dataset} & \textbf{Task} & $\Delta$ \textbf{Concat} & $\Delta$ \textbf{Gate} & $\Delta$ \textbf{Mix} & $\Delta$ \textbf{Rand-Concat} \\
+\midrule
+\multicolumn{6}{l}{\textit{Node classification}} \\
+Cora      & node  & $-0.007$ & $+0.012$        & $-0.008$ & $+0.000$ \\
+Citeseer  & node  & $-0.000$ & $-0.015$        & $+0.012$ & $+0.007$ \\
+Pubmed    & node  & $+0.008$ & $-0.007$        & $-0.008$ & $-0.025$ \\
+\midrule
+\multicolumn{6}{l}{\textit{Graph classification}} \\
+PROTEINS  & graph & $\mathbf{+0.033}$ & $+0.018$ & $+0.011$ & $-0.042$ \\
+NCI1      & graph & $\mathbf{+0.058}$ & $+0.019$ & $+0.017$ & $-0.009$ \\
+ENZYMES   & graph & $\mathbf{+0.047}$ & $+0.044$ & $+0.022$ & $+0.008$ \\
+\bottomrule
+\end{tabular}
+\end{table}

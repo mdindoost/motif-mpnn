@@ -1,13 +1,12 @@
-concat:
-  motif_scale: 1.0
-dataset: proteins
+dataset: citeseer
+motif_rand: true
 optim:
   lr: 0.01
   weight_decay: 0.0
-run_name: proteins_concat
+run_name: citeseer_rand_concat
 train:
-  batch_size: 64
   epochs: 200
   patience: 50
   seed: 42
+use_public_split: true
 variant: concat

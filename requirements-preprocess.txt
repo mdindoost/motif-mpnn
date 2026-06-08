@@ -1,8 +1,8 @@
 # Preprocessing dependencies (for scripts/preprocess/)
-# Install in addition to requirements.txt
-#
-# igraph and networkit were NOT found in the current conda env (motif-mpnn).
-# Install as needed before running generate_motifs.py or export_edges.py.
+# Install in addition to requirements.txt:
+#   pip install -r requirements-preprocess.txt
 
-igraph          # python-igraph; required for --backend igraph (default)
-networkit       # optional; required for --backend networkit only
+python-igraph==1.0.0   # required for --tool igraph (default backend)
+networkit==11.2.1       # required for --tool networkit (optional, faster on large graphs)
+ogb==1.3.6              # required for ogbn-arxiv dataset loading (future)
+tqdm==4.67.1            # progress bars (also used in training; pin here for completeness)

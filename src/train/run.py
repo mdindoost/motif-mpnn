@@ -50,8 +50,11 @@ def main():
 
     # ---------------- Dataset ----------------
     DatasetCls = DATASET_REGISTRY.get(exp.dataset.name)
+    # FIX: pass split_seed so TU stratified splits are seeded per training run
+    _split_seed = int(getattr(exp.train, 'seed', 42))
     dataset = DatasetCls(root=exp.dataset.root,
-                         use_public_split=getattr(exp.dataset, 'use_public_split', False))
+                         use_public_split=getattr(exp.dataset, 'use_public_split', False),
+                         split_seed=_split_seed)
 
     # Infer dims + task from dataset bundle
     if getattr(dataset, "task", "node") == "node":
@@ -64,14 +67,16 @@ def main():
         out_dim = int(dataset.num_classes)
         task = "graph"
 
-    # Motif dim (node task only for now)
-    motif_dim = 0
+    # motif_dim: how many motif features are available in the dataset
+    _available_motif_dim = 0
     if task == "node" and getattr(dataset, "motif_x", None) is not None:
-        motif_dim = int(dataset.motif_x.size(1))
+        _available_motif_dim = int(dataset.motif_x.size(1))
     elif task == "graph":  # FIX: read motif_dim from TUWithMotifs wrapper for graph tasks
         ds_obj_inner = getattr(dataset, 'dataset', None)
         if ds_obj_inner is not None and hasattr(ds_obj_inner, 'motif_dim'):
-            motif_dim = int(ds_obj_inner.motif_dim)
+            _available_motif_dim = int(ds_obj_inner.motif_dim)
+    # Only non-zero for motif-aware models — GCN/SAGE/GAT report 0 even if CSV exists
+    motif_dim = _available_motif_dim if exp.model.name in {"concat", "gate", "mix"} else 0
 
     # FIX: warn if a motif variant is requested but no motif features were found
     if exp.model.name in {"concat", "gate", "mix"} and motif_dim == 0:
@@ -81,6 +86,33 @@ def main():
             f"Model will behave identically to plain GCN. Run scripts/preprocess/generate_motifs.py to generate motifs.",
             UserWarning
         )
+
+    # ---- ABLATION D: replace motif_x with random Gaussian noise (same shape, seeded) ----
+    # Activated by motif_rand: true in experiment YAML. Tests whether gains come from
+    # motif *structure* or merely from having extra input dimensions.
+    motif_rand = bool((exp.raw or {}).get('motif_rand', False))
+    if motif_rand and motif_dim > 0:
+        import warnings
+        warnings.warn(
+            "ABLATION D: motif_x replaced with random Gaussian noise "
+            "(shape preserved, seed=train.seed+99999). "
+            "Tests whether improvement is structural or dimensional.",
+            UserWarning
+        )
+        _rand_seed = int(getattr(exp.train, 'seed', 42)) + 99999
+        rng = torch.Generator()
+        rng.manual_seed(_rand_seed)
+        if task == 'node':
+            mx = getattr(dataset, 'motif_x', None)
+            if mx is not None:
+                dataset.motif_x = torch.randn(mx.shape, generator=rng)
+        elif task == 'graph':
+            wrapped = getattr(dataset, 'dataset', None)
+            if wrapped is not None and hasattr(wrapped, 'motif_list'):
+                wrapped.motif_list = [
+                    torch.randn(mx.shape, generator=rng)
+                    for mx in wrapped.motif_list
+                ]
 
     # ---------------- Model ----------------
     ModelCls = MODEL_REGISTRY.get(exp.model.name)
@@ -141,6 +173,7 @@ def main():
         "normalize": exp.normalize,
         "pruning": exp.pruning,
         "motif_dim": motif_dim,
+        "motif_rand": motif_rand,
         "motif_manifest_preview_keys": list(motif_manifest.keys())[:5] if motif_manifest else [],
         "timestamp": datetime.now().isoformat(timespec="seconds"),
     }
@@ -203,7 +236,9 @@ def main():
     run_ts = datetime.now().isoformat(timespec="seconds")
     run_result = {
         "dataset":        exp.dataset.name,
+        "run_name":       exp.run_name,
         "variant":        exp.variant or exp.model.name,
+        "motif_rand":     motif_rand,
         "motif_dim":      motif_dim,
         "test_acc":       final.get('test_acc', None),
         "test_macro_f1":  final.get('test_macro_f1', None),
@@ -221,8 +256,9 @@ def main():
     # Ensure the parent directory exists (it should — save_dir was just created above)
     all_runs_path.parent.mkdir(parents=True, exist_ok=True)
     _CSV_COLUMNS = [
-        "timestamp", "config_path", "dataset", "variant", "motif_dim",
-        "test_acc", "test_macro_f1", "best_val_epoch", "total_epochs", "seed",
+        "timestamp", "config_path", "dataset", "run_name", "variant",
+        "motif_dim", "motif_rand", "test_acc", "test_macro_f1",
+        "best_val_epoch", "total_epochs", "seed",
     ]
     row_df = pd.DataFrame([{col: run_result[col] for col in _CSV_COLUMNS}])
     write_header = not all_runs_path.exists()

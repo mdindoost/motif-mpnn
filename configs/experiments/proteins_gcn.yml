@@ -1,11 +1,11 @@
 dataset: proteins
-variant: gcn
-run_name: proteins_gcn
-train:
-  epochs: 200
-  patience: 50
-  seed: 42
-  batch_size: 64
 optim:
   lr: 0.01
   weight_decay: 0.0
+run_name: proteins_gcn
+train:
+  batch_size: 64
+  epochs: 200
+  patience: 50
+  seed: 42
+variant: gcn

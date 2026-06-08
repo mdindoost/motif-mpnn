@@ -26,7 +26,7 @@ def _seeded_generator(seed: int) -> torch.Generator:
     return g
 
 
-def _stratified_indices(labels: torch.Tensor, seed: int, ratios=(0.8, 0.1, 0.1)) -> Dict[str, List[int]]:
+def _stratified_indices(labels: torch.Tensor, seed: int, ratios=(0.6, 0.2, 0.2)) -> Dict[str, List[int]]:
     """Stratified split over graph labels into train/val/test with given ratios."""
     assert abs(sum(ratios) - 1.0) < 1e-6
     g = _seeded_generator(seed)
@@ -53,6 +53,7 @@ def _load_tu(name: str, root: str, split_seed: int = 42) -> GraphDatasetBundle:
     Notes:
       - We place the raw TU data under {root}/tu/{NAME} for cleanliness.
       - 'name' may be 'proteins' | 'nci1' | 'enzymes' (case-insensitive).
+      - Stratified split ratios: 60/20/20 (train/val/test), seeded per run.
     """
     name_upper = name.upper()
     ds_root = Path(root) / "tu" / name_upper

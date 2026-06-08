@@ -7,4 +7,5 @@ train:
   seed: 42 # for reproducibility
 optim:
   lr: 0.01
-  weight_decay: 0.0 
+  weight_decay: 0.0
+use_public_split: true

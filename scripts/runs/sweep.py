@@ -8,7 +8,6 @@ Usage:
         --out results/tables/sweep.tex
 """
 import argparse
-import csv
 import hashlib
 import os
 import re
@@ -84,17 +83,6 @@ def _config_label(config_path: str) -> str:
     return Path(config_path).stem
 
 
-def _append_all_runs(row: dict, results_dir: str) -> None:
-    """Append one completed run to results/all_runs.csv (create if absent)."""
-    all_runs_path = Path(results_dir).parent / "all_runs.csv"
-    fieldnames = ["timestamp", "config", "seed", "dataset", "variant",
-                  "test_acc", "test_macro_f1", "best_val_epoch"]
-    write_header = not all_runs_path.exists()
-    with open(all_runs_path, "a", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=fieldnames)
-        if write_header:
-            writer.writeheader()
-        writer.writerow({k: row.get(k, "") for k in fieldnames})
 
 
 # ---------------------------------------------------------------------------
@@ -280,7 +268,8 @@ def main() -> None:
                     "best_val_epoch": parsed["best_val_epoch"],
                 }
                 results.append(row)
-                _append_all_runs(row, args.results_dir)
+                # NOTE: run.py already appends to results/all_runs.csv in its own format.
+                # sweep.py does NOT write a second row to avoid format corruption.
 
                 if proc.returncode != 0:
                     print(f"  [WARNING] run exited with code {proc.returncode}")

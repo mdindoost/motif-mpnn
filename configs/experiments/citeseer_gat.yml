@@ -1,6 +1,6 @@
-dataset: cora
+dataset: citeseer
 variant: gat
-run_name: cora_gat
+run_name: citeseer_gat
 train:
   epochs: 200
   patience: 50
