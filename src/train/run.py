@@ -163,6 +163,10 @@ def main():
     save_dir = Path(exp.save_dir) / f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{exp.run_name}"
     save_dir.mkdir(parents=True, exist_ok=True)
 
+    # Device is selected once here and recorded in the manifest for reproducibility
+    # provenance (CUDA scatter ops are non-deterministic, so device matters for results).
+    device = 'cuda' if torch.cuda.is_available() else 'cpu'
+
     motif_manifest = getattr(dataset, "motif_manifest", {})
     manifest = {
         "config_path": os.path.abspath(args.config),
@@ -174,6 +178,9 @@ def main():
         "pruning": exp.pruning,
         "motif_dim": motif_dim,
         "motif_rand": motif_rand,
+        "device": device,
+        "torch_version": torch.__version__,
+        "cuda_device_name": (torch.cuda.get_device_name(0) if device == 'cuda' else None),
         "motif_manifest_preview_keys": list(motif_manifest.keys())[:5] if motif_manifest else [],
         "timestamp": datetime.now().isoformat(timespec="seconds"),
     }
@@ -201,7 +208,6 @@ def main():
     raw_bs = int(getattr(exp.train, 'batch_size', 0))
     batch_size = raw_bs if (task == "node" or raw_bs > 0) else 64
 
-    device = 'cuda' if torch.cuda.is_available() else 'cpu'
     print(f"Training on {device} for up to {epochs} epochs (patience={patience}, monitor={monitor})...")
 
     from src.train.engine import train_node_task, train_graph_task

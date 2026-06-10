@@ -154,7 +154,11 @@ def load_config(path: str) -> ExperimentConfig:
     # FIX: read use_public_split from top-level flat-style YAML key
     use_public_split_flag = bool(merged.get("use_public_split", False))
     ds = DatasetConfig(name=ds_name, task=ds_task, root=ds_root, use_public_split=use_public_split_flag)
-    md = ModelConfig(name=model_name)
+    # FIX: build ModelConfig from the merged `model:` block so flat-style configs can
+    # override hidden_dim/num_layers/dropout/layer_norm/residual (previously these were
+    # silently dropped — only name was read). The resolved name (variant priority) wins.
+    md = _safe_dataclass(ModelConfig, merged.get("model") or {}, "model")
+    md.name = model_name
     # FIX: use _safe_dataclass to warn about unknown keys instead of crashing
     tr = _safe_dataclass(TrainConfig, merged.get("train") or {}, "train")
     op = _safe_dataclass(OptimConfig, merged.get("optim") or {}, "optim")
