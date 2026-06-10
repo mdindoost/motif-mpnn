@@ -87,7 +87,7 @@ def _infer_dataset_name_from_filename(path: pathlib.Path) -> Optional[str]:
     return stem.split("_", 1)[0] or None
 
 def _task_by_name(name: str) -> str:
-    return "graph" if name in {"proteins", "nci1", "enzymes"} else "node"
+    return "graph" if name in {"proteins", "nci1", "enzymes", "csl"} else "node"
 
 def load_config(path: str) -> ExperimentConfig:
     p = pathlib.Path(path)
@@ -173,9 +173,9 @@ def load_config(path: str) -> ExperimentConfig:
 
 
 # FIX: known-value sets for validate_config
-KNOWN_VARIANTS = {"gcn", "sage", "gat", "concat", "gate", "mix", "identity"}
-KNOWN_DATASETS = {"cora", "citeseer", "pubmed", "proteins", "nci1", "enzymes"}
-GRAPH_DATASETS = {"proteins", "nci1", "enzymes"}
+KNOWN_VARIANTS = {"gcn", "sage", "gat", "gin", "concat", "gate", "mix", "identity"}
+KNOWN_DATASETS = {"cora", "citeseer", "pubmed", "proteins", "nci1", "enzymes", "csl"}
+GRAPH_DATASETS = {"proteins", "nci1", "enzymes", "csl"}
 NODE_DATASETS = {"cora", "citeseer", "pubmed"}
 
 

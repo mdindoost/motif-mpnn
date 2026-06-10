@@ -3,9 +3,10 @@ generate_motifs.py — Motif preprocessing pipeline for Motif-MPNN.
 
 Computes per-node motif participation counts and writes them to the format
 consumed by src/datasets/motif_loader.py.  This script is the bridge until
-HiPerXplorer (the real HPC motif counter in Chapel/Arkouda) is connected.
+HiPerMotif (the real HPC parallel subgraph isomorphism engine in Arachne /
+Chapel / Arkouda) is connected.
 
-OUTPUT FORMAT — identical to what HiPerXplorer will produce so swapping engines
+OUTPUT FORMAT — identical to what HiPerMotif will produce so swapping engines
 requires zero changes downstream:
 
   Planetoid (node classification):
@@ -26,7 +27,7 @@ motif_id values 2 and 3 match igraph's motifs_undirected() isomorphism class
 numbering for 3-node connected undirected subgraphs. Class 0 = single edge +
 isolated, class 1 = path of 3 nodes, class 2 = wedge/path-of-2, class 3 = triangle.
 
-HiPerXplorer swap: ensure HiPerXplorer output uses the same (k, motif_id) pairs
+HiPerMotif swap: ensure HiPerMotif output uses the same (k, motif_id) pairs
 so that motif_loader.py requires no changes.
 
 Usage:
@@ -35,8 +36,8 @@ Usage:
   python scripts/preprocess/generate_motifs.py --dataset all
   python scripts/preprocess/generate_motifs.py --dataset cora --force --verify
 
-HiPerXplorer swap: when HiPerXplorer is connected, replace this script's
-counting logic with a single HiPerXplorer call that writes the same CSV columns.
+HiPerMotif swap: when HiPerMotif is connected, replace this script's
+counting logic with a single HiPerMotif call that writes the same CSV columns.
 No changes needed in motif_loader.py or any model code.
 """
 
@@ -48,13 +49,21 @@ from pathlib import Path
 
 PLANETOID_DATASETS = {"cora", "citeseer", "pubmed"}
 TU_DATASETS = {"proteins", "nci1", "enzymes"}
-ALL_DATASETS = sorted(PLANETOID_DATASETS | TU_DATASETS)
+SYNTHETIC_DATASETS = {"csl"}
+ALL_DATASETS = sorted(PLANETOID_DATASETS | TU_DATASETS | SYNTHETIC_DATASETS)
 
-# HiPerXplorer-compatible motif ID scheme for undirected k=3 motifs (igraph convention)
+# HiPerMotif-compatible motif ID scheme for undirected k=3 motifs (igraph convention)
 # k=3, motif_id=2 → open triangle (wedge / path of length 2), iso-type 2 in igraph
 # k=3, motif_id=3 → closed triangle (3-clique), iso-type 3 in igraph
 MOTIF_WEDGE = 2
 MOTIF_TRIANGLE = 3
+
+# 4-clique CSV encoding (our scheme; motif_loader treats (k, motif_id) opaquely)
+MOTIF_4CLIQUE_K = 4
+MOTIF_4CLIQUE_ID = 10
+# Simple-cycle CSV encoding: (k=L, motif_id=CYCLE_SENTINEL) for a length-L cycle
+CYCLE_SENTINEL = 1000
+CYCLE_L_MAX = 8  # empirically bump until all 10 CSL classes separate (see Task 8)
 
 
 # ---------------------------------------------------------------------------
@@ -95,6 +104,26 @@ def _load_tu_graphs_as_nx(dataset: str, root: Path):
     for i in range(len(ds)):
         g = to_networkx(ds[i], to_undirected=True)
         graphs.append((i, g, int(ds[i].num_nodes)))
+    return graphs
+
+
+def _load_csl_graphs_as_nx(root: Path):
+    """Build the 150 CSL graphs (same seed as the dataset) as networkx graphs."""
+    import networkx as nx
+    import sys as _sys
+    repo_root = Path(__file__).resolve().parents[2]
+    if str(repo_root) not in _sys.path:
+        _sys.path.insert(0, str(repo_root))
+    from src.datasets.expressivity import make_csl
+    graphs = []
+    for gid, (ei, _label) in enumerate(make_csl(seed=0)):
+        n = int(ei.max().item()) + 1
+        g = nx.Graph()
+        g.add_nodes_from(range(n))
+        for u, v in ei.t().tolist():
+            if u != v:
+                g.add_edge(int(u), int(v))
+        graphs.append((gid, g, n))
     return graphs
 
 
@@ -190,6 +219,40 @@ def _count_motifs_igraph_single(g_nx, num_nodes: int):
         if wedges > 0:
             rows.append((u, 3, MOTIF_WEDGE, wedges))
 
+    return rows
+
+
+def _count_substructures_single(g_nx, num_nodes: int):
+    """Per-node rows: degree, triangle, wedge, simple cycles (3..CYCLE_L_MAX), 4-cliques."""
+    from src.datasets.substructure_counts import (
+        triangles_per_node, four_cliques_per_node, simple_cycles_per_node,
+    )
+    rows = []
+    deg = dict(g_nx.degree())
+    for u in range(num_nodes):
+        d = deg.get(u, 0)
+        if d > 0:
+            rows.append((u, 1, 0, d))
+    tpn = triangles_per_node(g_nx, num_nodes)
+    for u in range(num_nodes):
+        d = deg.get(u, 0)
+        tri = tpn.get(u, 0)
+        if tri > 0:
+            rows.append((u, 3, MOTIF_TRIANGLE, tri))
+        wedges = d * (d - 1) // 2 - tri
+        if wedges > 0:
+            rows.append((u, 3, MOTIF_WEDGE, wedges))
+    # simple cycles by length
+    spn = simple_cycles_per_node(g_nx, num_nodes, l_max=CYCLE_L_MAX)
+    for u, by_len in spn.items():
+        for L, c in by_len.items():
+            if c > 0:
+                rows.append((u, int(L), CYCLE_SENTINEL, int(c)))
+    # 4-cliques
+    fpn = four_cliques_per_node(g_nx, num_nodes)
+    for u, c in fpn.items():
+        if c > 0:
+            rows.append((u, MOTIF_4CLIQUE_K, MOTIF_4CLIQUE_ID, int(c)))
     return rows
 
 
@@ -298,6 +361,18 @@ def _run_dataset(dataset: str, tool: str, root: Path, out_dir_override: Path | N
 
         _write_tu_csv(all_rows, out_path, topk)
 
+    elif dataset in SYNTHETIC_DATASETS:
+        print(f"[INFO] Building synthetic/{dataset} graphs ...")
+        graphs = _load_csl_graphs_as_nx(root)
+        print(f"[INFO] {len(graphs)} graphs built")
+        from tqdm import tqdm
+        all_rows = []
+        for graph_id, g_nx, num_nodes in tqdm(graphs, desc=f"  {dataset} graphs", unit="graph"):
+            per_node = _count_substructures_single(g_nx, num_nodes)
+            for node_id, k, motif_id, count in per_node:
+                all_rows.append((graph_id, node_id, k, motif_id, count))
+        _write_tu_csv(all_rows, out_path, topk)
+
     else:
         print(f"[ERROR] Unknown dataset: {dataset}")
         sys.exit(1)
@@ -313,7 +388,7 @@ def _run_dataset(dataset: str, tool: str, root: Path, out_dir_override: Path | N
     print("  1. Run your experiment: python -m src.train.run --config configs/experiments/<dataset>_concat.yml")
     print("  2. The motif_loader will auto-build motif_x.pt cache on first run.")
     print()
-    print("HiPerXplorer swap: replace this script with a HiPerXplorer call that writes")
+    print("HiPerMotif swap: replace this script with a HiPerMotif call that writes")
     print("the same CSV columns. No changes needed in motif_loader.py or model code.")
 
 
@@ -328,7 +403,7 @@ def main():
     parser.add_argument(
         "--dataset",
         required=True,
-        choices=sorted(PLANETOID_DATASETS | TU_DATASETS) + ["all"],
+        choices=sorted(PLANETOID_DATASETS | TU_DATASETS | SYNTHETIC_DATASETS) + ["all"],
         help="Dataset to compute motifs for, or 'all' to run every dataset.",
     )
     parser.add_argument(

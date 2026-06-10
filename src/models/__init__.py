@@ -11,6 +11,7 @@ from .mix import *      # noqa: F401,F403
 from .gcn import *      # noqa: F401,F403
 from .sage import *     # noqa: F401,F403
 from .gat import *      # noqa: F401,F403
+from .gin import *      # noqa: F401,F403
 
 
 # --- Identity (dummy) ---

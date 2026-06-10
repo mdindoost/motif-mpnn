@@ -6,7 +6,9 @@ This file is the authoritative reference for contributors and Claude. Update it 
 
 ## 1. Research Context
 
-This codebase tests whether subgraph motif statistics (degree, wedge, triangle counts) improve GNN message passing on standard node and graph classification benchmarks. The repo is an evaluation harness; the long-term research contribution is integrating **HiPerXplorer** — a high-performance parallel motif counter written in Chapel and deployed via Arkouda — and showing its features improve GNN performance. Until HiPerXplorer is connected, motifs are computed locally via NetworKit or igraph.
+This codebase tests whether subgraph motif statistics (degree, wedge, triangle counts) improve GNN message passing on standard node and graph classification benchmarks. The repo is an evaluation harness; the long-term research contribution is integrating **HiPerMotif** — a parallel edge-centric subgraph isomorphism engine in the open-source **Arachne** framework (Chapel/Arkouda) — as an *exact substructure-feature extractor* for expressive GNNs, and showing its features improve GNN performance at scale. Until HiPerMotif is connected, motifs are computed locally via NetworKit or igraph.
+
+**Research framing (HPEC 2026 proposal `hipermotif-gnn-hpec2026.tex`):** message-passing GNNs are bounded by the 1-WL test and provably cannot count triangles, cycles, or cliques. Injecting *exact* substructure counts removes this ceiling (cf. GSN, Bouritsas 2022). The thesis is that HiPerMotif makes exact counting feasible on large hosts (up to ~10^8 edges), so expressive substructure-aware GNNs can be demonstrated at a scale prior work has not reached. The eventual feature set is **per-vertex orbit features**: raw isomorphism counts from HiPerMotif normalized by each pattern's automorphism group `|Aut(H)|` (and orbit stabilizer per vertex). The current repo's `concat` variant (motif_x concatenated to node features) is exactly the "Use in a GNN" step of that pipeline, restricted to a 3-feature library (degree, wedge, triangle).
 
 ---
 
@@ -117,7 +119,7 @@ scripts/
     verify_motifs.py    — sanity-check a motif CSV; optional --plot for histograms
     export_edges.py     — export PyG graph to edge list for external tools
     download_datasets.py — pre-download TU datasets
-    README.md           — expected output format for HiPerXplorer
+    README.md           — expected output format for HiPerMotif
   runs/
     sweep.py            — multi-seed sweep; writes per-run rows + LaTeX summary table
 
@@ -226,6 +228,7 @@ When constructing any dataclass from a YAML dict, unknown keys emit a `UserWarni
 | `gcn` | `GCN` | Standard 2-layer GCN backbone; supports both node and graph tasks | — |
 | `sage` | `GraphSAGE` | GraphSAGE with mean aggregation | — |
 | `gat` | `GAT` | Graph Attention Network | — |
+| `gin` | `GIN` | Graph Isomorphism Network; maximally-1-WL-expressive MPNN, sum readout; tight ceiling baseline | — |
 | `concat` | `ConcatModel` | Concatenates `motif_x` to node features before GCN encoder; falls back to GCN if no motif CSV | `motif_dim` |
 | `gate` | `GateModel` | Learns edge-wise gates from motif context to modulate GCN messages | `motif_dim`; `gate:` YAML section |
 | `mix` | `MixModel` | Blends structural adjacency with motif-similarity adjacency (vectorized scatter-topk) | `motif_dim`; `mix:` YAML section (`lambda_mix`, `motif_topk`, `sim_metric`, `self_loop`) |
@@ -245,8 +248,11 @@ All motif-aware variants (concat, gate, mix) accept `motif_dim=0` and behave ide
 | `proteins` | graph | TU | `data/precompute/proteins/node_motifs.csv` |
 | `nci1` | graph | TU | `data/precompute/nci1/node_motifs.csv` |
 | `enzymes` | graph | TU | `data/precompute/enzymes/node_motifs.csv` |
+| `csl`     | graph | synthetic (CSL) | `data/precompute/csl/node_motifs.csv` |
 
 TU datasets (proteins/nci1/enzymes) use **stratified 60/20/20** (train/val/test) splits, seeded per training run (split_seed = train.seed). Planetoid datasets use canonical public splits (`use_public_split: true`). **Any random split in this repo is always 60/20/20 stratified seeded.** TU downloads may be blocked by network policies; use `scripts/preprocess/download_datasets.py` to pre-download if needed.
+
+CSL is a synthetic expressivity benchmark (10 classes, 150 graphs, 60/20/20 stratified). Shrikhande/rook live as a test fixture in `tests/test_srg_distinguishability.py`, not in the registry.
 
 ---
 
@@ -367,6 +373,26 @@ Bold = best motif-aware result per dataset.
 
 **Historical results** (pre-rewrite, seeded splits, seed=42, 2026-06-06): Cora GCN: 0.756/0.743. PROTEINS GCN: 0.741/0.705. These used directed motif IDs and are not comparable to current results.
 
+### Expressivity demos (2026-06-09)
+
+All results are on branch `expressivity-demo`. Analytical results are proven deterministically (no training noise) in the test suite; empirical results are single runs (seed=42).
+
+**CSL (10-class, 150 graphs, constant all-ones node features):**
+
+| variant | test_acc | notes |
+|---------|----------|-------|
+| `gcn`   | 0.1000   | chance (10-way); hits 1-WL ceiling as predicted |
+| `gin`   | 0.1000   | chance; even the maximally-1-WL-expressive MPNN cannot separate the classes |
+| `concat`| 1.0000   | exact cycle/substructure features (motif_dim=9: degree, wedge, triangle, simple-cycles by length) break the ceiling; converged ~epoch 6 |
+
+CSL contains NO 4-cliques (4-regular); the cycle-length spectrum is what separates the 10 classes. Confirmed analytically in `tests/test_csl_separability.py`: full cycle spectrum (L_MAX=8) separates all 10 classes; cycles ≤ length 4 do not.
+
+**Shrikhande vs. 4×4-rook (test fixture, not a registered dataset):**
+
+Both graphs are strongly regular (16, 6, 2, 2) with identical 1-WL signatures and identical triangle counts (32 each). Their 4-clique counts differ: rook = 8, Shrikhande = 0 — a single exact substructure count separates a cospectral pair. Proven in `tests/test_srg_distinguishability.py`.
+
+**D2 finding:** Aut(H) normalization is a no-op under per-column z-score for single-orbit features. Proven in `tests/test_aut_normalization_noop.py`.
+
 ---
 
 ## 10. Known Bugs Fixed
@@ -414,7 +440,9 @@ All bugs below were identified and fixed during the 2026-06-06/07 audit.
 - `sweep.py` does not support `--group paper-core` yet.
 - Social datasets (IMDB-B, IMDB-M, REDDIT-B) not registered in DATASET_REGISTRY.
 - Large-scale dataset (ogbn-arxiv) not registered in DATASET_REGISTRY.
-- HiPerXplorer not connected.
+- HiPerMotif not connected (local igraph/NetworKit stand-in for now).
+- Orbit-feature extraction (automorphism normalization, richer pattern library beyond degree/wedge/triangle) not implemented — see Section 13.
+- Expressivity benchmarks from the proposal (CSL, Shrikhande vs. 4x4 rook) not registered in DATASET_REGISTRY.
 
 ---
 
@@ -426,6 +454,27 @@ All bugs below were identified and fixed during the 2026-06-06/07 audit.
 
 ---
 
-## 13. HiPerXplorer Integration Plan
+## 13. HiPerMotif Integration Plan
 
-When HiPerXplorer (Chapel/Arkouda parallel motif counter) is ready, replace only the counting logic in `scripts/preprocess/generate_motifs.py` — specifically the `_count_motifs_networkit` and `_count_motifs_igraph_single` functions — with a single call to the HiPerXplorer CLI or Python API. The output CSV format (Planetoid: `node_id,k,motif_id,count`; TU: `graph_id,node_id,k,motif_id,count`) must remain identical so that `motif_loader.py` and all model code require zero changes. After swapping the backend, delete the cached `.pt` files under `data/precompute/` so the loader rebuilds from the new CSV.
+### Backend swap (drop-in, preserves all downstream code)
+
+When HiPerMotif (Arachne / Chapel / Arkouda parallel subgraph isomorphism engine) is ready, replace only the counting logic in `scripts/preprocess/generate_motifs.py` — specifically the `_count_motifs_networkit` and `_count_motifs_igraph_single` functions — with a call to the HiPerMotif interface. The output CSV format (Planetoid: `node_id,k,motif_id,count`; TU: `graph_id,node_id,k,motif_id,count`) must remain identical so that `motif_loader.py` and all model code require zero changes. After swapping the backend, delete the cached `.pt` files under `data/precompute/` so the loader rebuilds from the new CSV.
+
+### HiPerMotif API (per the HPEC 2026 proposal)
+
+Invoke via the Arachne property-graph interface:
+- `return_isos_as="count"` → raw number of isomorphisms → divide by `|Aut(H)|` for graph-level motif counts.
+- `return_isos_as="vertices"` → flattened mappings (length `n·k` for `k` embeddings of an `n`-vertex pattern) + a mapper identifying each pattern vertex → tally host vertices by pattern position, collapse positions within an orbit → per-vertex orbit counts.
+- `algorithm_type="si"` selects the edge-centric HiPerMotif search; `reorder_type="structural"` selects structural pattern reordering.
+
+### Orbit-feature normalization (the only nontrivial math)
+
+For each pattern `H`: precompute `Aut(H)` and the partition of `V(H)` into automorphism orbits `O_1..O_r`. Each embedded copy is reported `|Aut(H)|` times, so true copies = raw count / `|Aut(H)|`. For per-vertex features, divide an orbit's count by the stabilizer size `b_j = |Aut(H)| / |O_j|` so each copy contributes once per participating vertex. Final feature is `log(1+X)` (heavy-tailed) — consistent with the existing `log1p`+z-score normalization in `motif_loader.py`. See Algorithm 1 in the proposal.
+
+### Direction this enables (beyond the current 3-feature library)
+
+- Richer pattern library: triangle, wedge, 4-path, 4-cycle, claw, paw, diamond, 4-clique, selected 5-vertex patterns — each as one or more orbit columns. This requires extending the `(k, motif_id)` manifest scheme in `motif_loader.py` and `generate_motifs.py`.
+- Expressivity demonstrations as datasets/tests: CSL (10-way, 1-WL caps at 10%) and the Shrikhande vs. 4x4-rook pair (4-clique count = 8 vs. 0 separates a cospectral pair) — useful as unit tests that exact features add signal a plain GNN cannot represent.
+- At-scale story: report extraction time / parallel scaling and the per-motif compute-vs-accuracy frontier on large hosts (the proposal's open `\todo` results).
+
+**Naming note:** the engine is **HiPerMotif** (Dindoost et al., HPEC 2025, arXiv:2507.04130). The repo was reconciled from the old "HiPerXplorer" name on 2026-06-09 — do not reintroduce it.

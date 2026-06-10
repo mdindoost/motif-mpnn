@@ -18,3 +18,4 @@ class DummyNodeDataset:
 # These imports have side effects: they register 'cora', 'citeseer', 'pubmed', 'proteins', 'nci1', 'enzymes'
 from .planetoid import *  # noqa: F401,F403
 from .tu import *         # noqa: F401,F403
+from .expressivity import *  # noqa: F401,F403  (registers 'csl')
