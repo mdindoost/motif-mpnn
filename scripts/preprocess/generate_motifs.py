@@ -256,6 +256,31 @@ def _count_substructures_single(g_nx, num_nodes: int):
     return rows
 
 
+def _count_orbits_single(g_nx, num_nodes: int, graphlet_size: int = 4):
+    """Per-node ORCA orbit rows: (node_id, k, motif_id, count) for nonzero counts.
+
+    Each orbit o -> (k = graphlet node count, motif_id = 2000 + o), disjoint from
+    all legacy encodings. ORCA is exact/deterministic (see src/datasets/orca_orbits).
+    """
+    import sys as _sys
+    repo_root = Path(__file__).resolve().parents[2]
+    if str(repo_root) not in _sys.path:
+        _sys.path.insert(0, str(repo_root))
+    from src.datasets.orca_orbits import count_orbits, orbit_to_km
+
+    edges = [(u, v) for u, v in g_nx.edges() if u != v]
+    mat = count_orbits(edges, num_nodes, graphlet_size=graphlet_size)
+    rows = []
+    n_orbits = mat.shape[1]
+    for u in range(num_nodes):
+        for o in range(n_orbits):
+            c = int(mat[u, o])
+            if c > 0:
+                k, motif_id = orbit_to_km(o)
+                rows.append((u, k, motif_id, c))
+    return rows
+
+
 # ---------------------------------------------------------------------------
 # Output writers
 # ---------------------------------------------------------------------------
@@ -284,6 +309,23 @@ def _write_tu_csv(all_rows, out_path: Path, topk: int):
         ):
             writer.writerow([graph_id, node_id, k, motif_id, count])
     print(f"[OK] Wrote {len(all_rows)} rows to {out_path}")
+
+
+def _write_orbit_csv(all_rows, out_path: Path, topk: int, multigraph: bool):
+    """Write node_motifs_orbit.csv (graph_id present iff multigraph)."""
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(out_path, "w", newline="") as f:
+        f.write(f"# motif_topk={topk} features=orbit\n")
+        writer = csv.writer(f)
+        if multigraph:
+            writer.writerow(["graph_id", "node_id", "k", "motif_id", "count"])
+            for row in sorted(all_rows, key=lambda r: (r[0], r[1], r[2], r[3])):
+                writer.writerow(list(row))
+        else:
+            writer.writerow(["node_id", "k", "motif_id", "count"])
+            for row in sorted(all_rows, key=lambda r: (r[0], r[1], r[2])):
+                writer.writerow(list(row))
+    print(f"[OK] Wrote {len(all_rows)} orbit rows to {out_path}")
 
 
 # ---------------------------------------------------------------------------
@@ -317,9 +359,39 @@ def _run_verify(out_path: Path):
 # ---------------------------------------------------------------------------
 
 def _run_dataset(dataset: str, tool: str, root: Path, out_dir_override: Path | None,
-                 force: bool, verify: bool, topk: int):
+                 force: bool, verify: bool, topk: int,
+                 features: str = "legacy", graphlet_size: int = 4):
     out_dir = out_dir_override if out_dir_override else Path("data/precompute") / dataset
     out_path = out_dir / "node_motifs.csv"
+
+    if features == "orbit":
+        orbit_path = out_dir / "node_motifs_orbit.csv"
+        if orbit_path.exists() and not force:
+            print(f"[SKIP] {orbit_path} already exists. Use --force to recompute.")
+            return
+        print(f"[INFO] ORCA orbit features (graphlet_size={graphlet_size}) for {dataset} ...")
+        from tqdm import tqdm
+        if dataset in PLANETOID_DATASETS:
+            G_nx, num_nodes = _load_planetoid_as_nx(dataset, root)
+            rows = _count_orbits_single(G_nx, num_nodes, graphlet_size)
+            _write_orbit_csv(rows, orbit_path, topk, multigraph=False)
+        else:
+            if dataset in TU_DATASETS:
+                graphs = _load_tu_graphs_as_nx(dataset, root)
+            elif dataset in SYNTHETIC_DATASETS:
+                graphs = _load_csl_graphs_as_nx(root)
+            else:
+                print(f"[ERROR] Unknown dataset: {dataset}")
+                sys.exit(1)
+            all_rows = []
+            for graph_id, g_nx, num_nodes in tqdm(graphs, desc=f"  {dataset} orbits", unit="graph"):
+                for node_id, k, motif_id, count in _count_orbits_single(g_nx, num_nodes, graphlet_size):
+                    all_rows.append((graph_id, node_id, k, motif_id, count))
+            _write_orbit_csv(all_rows, orbit_path, topk, multigraph=True)
+        if verify:
+            _run_verify(orbit_path)
+        print(f"\n[DONE] Orbit CSV written to: {orbit_path}")
+        return
 
     if out_path.exists() and not force:
         print(f"[SKIP] {out_path} already exists. Use --force to recompute.")
@@ -444,6 +516,21 @@ def main():
         default=10,
         help="motif_topk value written as a header comment in the CSV (default: 10).",
     )
+    parser.add_argument(
+        "--features",
+        default="legacy",
+        choices=["legacy", "orbit"],
+        help="Feature backend: 'legacy' = degree/wedge/triangle (default); "
+             "'orbit' = ORCA per-node graphlet-orbit counts -> node_motifs_orbit.csv.",
+    )
+    parser.add_argument(
+        "--graphlet-size",
+        dest="graphlet_size",
+        type=int,
+        default=4,
+        choices=[4, 5],
+        help="ORCA graphlet size for --features orbit (default 4; 5 is a smoke-test path).",
+    )
     args = parser.parse_args()
 
     root = Path(args.root)
@@ -462,6 +549,8 @@ def main():
             force=args.force,
             verify=args.verify,
             topk=args.topk,
+            features=args.features,
+            graphlet_size=args.graphlet_size,
         )
 
 

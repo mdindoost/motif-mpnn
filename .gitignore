@@ -49,3 +49,6 @@ data/raw_export/
 wandb/
 logs/
 
+# Compiled ORCA binary (source is vendored; binary is built locally)
+third_party/orca/orca
+
