@@ -1,0 +1,11 @@
+dataset: cora
+variant: gin
+run_name: cora_gin
+train:
+  epochs: 200
+  patience: 50
+  seed: 42 # for reproducibility
+optim:
+  lr: 0.01
+  weight_decay: 0.0
+use_public_split: true
