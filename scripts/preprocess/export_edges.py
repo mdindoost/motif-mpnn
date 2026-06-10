@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Export PyTorch Geometric datasets (Planetoid: Cora/Citeseer/Pubmed; TU: PROTEINS/NCI1/ENZYMES)
-to flat edge lists "src dst" per graph — ideal for HiPerXplorer and NetworkX.
+to flat edge lists "src dst" per graph — ideal for HiPerMotif and NetworkX.
 """
 
 import argparse

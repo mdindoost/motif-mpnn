@@ -1,0 +1,430 @@
+%==============================================================================
+% IEEE HPEC 2026 submission draft
+%
+% READ ME (Claude -> David):
+% Everything OUTSIDE the red [TODO]/\todo markers is written for real and is
+% either (a) verifiable field background with real citations, (b) the actual
+% HiPerMotif/Arachne method anchored to the API in Bears-R-Us/arkouda-njit, or
+% (c) motivating results I actually computed this session (CSL and the
+% Shrikhande/Rook strongly-regular pair -- see Sec. III, numbers are real).
+%
+% The red markers flag ONLY the things that must come from a cluster run I cannot
+% perform here (HiPerMotif wall-clock/throughput at scale, GNN accuracy on large
+% benchmarks, platform specs) plus authorship confirmation. I will not fabricate
+% those.
+%
+% HPEC 2026: <=6 pages (refs excluded), IEEEtran two-column, not anonymous,
+% submission Jul 7 2026 via CMT. No em dashes (per your style).
+%==============================================================================
+\documentclass[conference]{IEEEtran}
+\IEEEoverridecommandlockouts
+\usepackage{cite}
+\usepackage{amsmath,amssymb,amsfonts}
+\usepackage{algorithm}
+\usepackage{algpseudocode}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{xcolor}
+\usepackage{url}
+\usepackage[hidelinks]{hyperref}
+
+\newcommand{\todo}[1]{{\color{red}\textbf{[TODO: #1]}}}
+\newcommand{\figph}[1]{%
+  \framebox[0.95\columnwidth]{\parbox[c][3.0cm][c]{0.85\columnwidth}{\centering\color{red}\small #1}}}
+
+\begin{document}
+
+\title{Exact Substructure Features for Expressive Graph Neural Networks at Scale
+with Parallel Subgraph Isomorphism}
+
+% ---------------------------------------------------------------------------
+% AUTHORS -- confirm/extend. Defaulting to the HiPerMotif group; add the GNN-side
+% student as appropriate. HPEC is NOT anonymous, so real names belong here.
+% ---------------------------------------------------------------------------
+\author{
+\IEEEauthorblockN{Mohammad Dindoost and David A. Bader}
+\IEEEauthorblockA{\textit{Department of Data Science}\\
+\textit{New Jersey Institute of Technology}\\
+Newark, NJ, USA \\
+\[md724,bader\]@njit.edu}
+}
+
+\maketitle
+
+\begin{abstract}
+Message-passing graph neural networks (GNNs) are fundamentally limited by the
+first-order Weisfeiler--Leman (1-WL) test: two graphs with the same 1-WL coloring
+are indistinguishable to any such network, so common GNNs provably cannot count
+triangles, cycles, or cliques. Augmenting node and graph representations with
+substructure counts removes this barrier, but existing work computes those counts
+either on very small graphs or with learned approximations, because exact counting
+was assumed too expensive at scale. We close that gap by using HiPerMotif, a
+parallel edge-centric subgraph isomorphism engine in the open-source Arachne
+framework, as an exact substructure-feature extractor. We describe a pipeline that
+turns HiPerMotif isomorphism mappings into per-vertex \emph{orbit} features by
+normalizing with the automorphism group of each pattern, and we demonstrate the
+expressivity gap concretely: on the circulant skip-link (CSL) benchmark all ten
+classes share a single 1-WL coloring, capping any message-passing GNN at chance
+(10\%), whereas exact substructure features make the classes linearly separable at
+99.5\%; and on the cospectral strongly regular pair Shrikhande vs.\ the $4\times4$
+rook graph, a single 4-clique count (8 vs.\ 0) separates two graphs that 1-WL and
+all spectral invariants cannot. \todo{headline at-scale result: e.g.\ ``HiPerMotif
+extracts the orbit features of all motifs up to size $k$ on an $N$-edge host in
+$T$ seconds, $Z\times$ faster than baseline, enabling expressive-GNN features on
+graphs an order of magnitude larger than prior substructure methods.''}
+\end{abstract}
+
+\begin{IEEEkeywords}
+graph neural networks, subgraph isomorphism, Weisfeiler--Leman, expressivity,
+motif counting, parallel graph analytics, Arachne, Arkouda
+\end{IEEEkeywords}
+
+%==============================================================================
+\section{Introduction}
+%==============================================================================
+Graph neural networks have become the dominant model for learning on
+graph-structured data, but the most widely used variants, message-passing GNNs,
+have a precisely characterized expressivity ceiling. Their ability to distinguish
+non-isomorphic graphs is bounded by the first-order Weisfeiler--Leman (1-WL)
+heuristic~\cite{xu2019gin,morris2019}: if two graphs receive the same 1-WL stable
+coloring, no message-passing GNN, regardless of depth, width, or training, can tell
+them apart. A direct and practically important consequence is that such networks
+cannot count many simple substructures, including triangles, cycles beyond length
+three, and cliques~\cite{chen2020count}. Yet substructure frequencies carry the
+signal in many domains, from functional motifs in connectomes and biological
+networks to recurring patterns in social and cybersecurity graphs.
+
+The established remedy is to inject substructure information directly into the
+model. Graph Substructure Networks and related approaches augment each vertex with
+counts of its participation in a fixed family of small patterns, provably exceeding
+1-WL~\cite{bouritsas2022gsn}. This works, but the literature is constrained on the
+exact axis that matters for high performance computing: the counting step is
+treated as offline preprocessing and is evaluated almost entirely on small
+molecular graphs, or it is replaced by a \emph{learned, approximate}
+counter~\cite{fu2024desco} precisely because exact counting was assumed
+intractable at scale. The result is that expressive, substructure-aware GNNs have
+not been demonstrated on the large graphs where motif structure is most
+informative.
+
+Exact subgraph isomorphism at scale is, however, exactly the problem that recent
+parallel engines solve. HiPerMotif~\cite{dindoost2025hipermotif} introduces an
+edge-centric initialization with state injection that prunes the expensive early
+stages of the classical VF2 search~\cite{cordella2004vf2}; implemented in the
+open-source Arachne framework~\cite{rodriguez2022arachne} on top of
+Arkouda~\cite{merrill2019arkouda} and Chapel~\cite{chamberlain2007chapel}, it
+reports large speedups over VF2-PS~\cite{dindoost2024vf2ps} and other baselines and
+processes property graphs, such as a connectome with on the order of $10^8$ edges,
+that other engines cannot load. This makes it natural to ask whether exact
+substructure features for expressive GNNs are now feasible at a scale the GNN
+expressivity literature has not reached.
+
+\noindent\textbf{Contributions.}
+\begin{itemize}
+  \item We use exact parallel subgraph isomorphism (HiPerMotif) as a substructure
+        feature extractor for expressive GNNs, and give a pipeline that converts
+        isomorphism mappings into per-vertex \emph{orbit} features by normalizing
+        with each pattern's automorphism group (Sec.~\ref{sec:method}).
+  \item We make the expressivity payoff concrete with two exactly reproducible
+        cases (Sec.~\ref{sec:motivate}): the CSL benchmark, where every class
+        shares one 1-WL coloring, and the cospectral Shrikhande/rook pair, which no
+        spectral invariant separates but a single clique count does.
+  \item \todo{We characterize the compute-vs-accuracy frontier of exact
+        substructure features at scale, reporting which motif families are worth
+        their extraction cost on hosts up to $10^8$ edges.}
+\end{itemize}
+
+%==============================================================================
+\section{Background and Related Work}\label{sec:background}
+%==============================================================================
+
+\subsection{GNN expressivity and the 1-WL ceiling}
+Message-passing GNNs iteratively update each vertex representation from its
+neighbors' representations. Xu et al.~\cite{xu2019gin} and Morris et
+al.~\cite{morris2019} showed that this computation is at most as discriminative as
+1-WL color refinement, and that the most expressive such networks (e.g.\ GIN) match
+but do not exceed it. Higher-order and subgraph GNNs raise the ceiling at
+substantial computational cost, often running a GNN over many extracted subgraphs.
+
+\subsection{Substructure-aware GNNs and counting}
+Graph Substructure Networks~\cite{bouritsas2022gsn} augment vertices with counts of
+their roles (orbits) in a chosen set of small subgraphs, provably surpassing 1-WL
+and improving accuracy on molecular and synthetic tasks. Chen et
+al.~\cite{chen2020count} analyze which substructures GNNs can and cannot count.
+Because exact counting is costly, DeSCo~\cite{fu2024desco} and related methods
+\emph{learn} to predict subgraph counts and positions approximately. Our position
+is complementary and concrete: with a fast exact parallel counter, the
+approximation can be avoided, and exact orbit features can be produced on large
+hosts.
+
+\subsection{Parallel subgraph isomorphism}
+Subgraph isomorphism is NP-hard in general; practical solvers such as
+VF2~\cite{cordella2004vf2} use constraint propagation and ordering heuristics.
+Parallel and scalable variants in Arachne include
+VF2-PS~\cite{dindoost2024vf2ps} and HiPerMotif~\cite{dindoost2025hipermotif}, the
+latter shifting search initialization to validated edges and injecting partial
+states deeper in the search tree. Arachne~\cite{rodriguez2022arachne} provides the
+property-graph data structures and runs on Arkouda~\cite{merrill2019arkouda} and
+the Chapel parallel language~\cite{chamberlain2007chapel}. We treat HiPerMotif as a
+black-box exact counter and build a feature layer on top of its public interface.
+
+%==============================================================================
+\section{The Expressivity Gap, Concretely}\label{sec:motivate}
+%==============================================================================
+We first make the problem and the payoff exact, using 1-WL refinement itself as the
+provable ceiling of any message-passing GNN (two graphs with equal 1-WL colorings
+are indistinguishable to every such model). All numbers in this section are
+computed directly, independent of any trained network.
+
+\subsection{Circulant skip-link graphs (CSL)}
+The CSL benchmark~\cite{murphy2019relational,dwivedi2023benchmarking} consists of
+4-regular circulant graphs $\mathrm{CSL}(n,s)$ that differ only in a skip length
+$s$. For $n=41$ and the ten standard skips
+$s\in\{2,3,4,5,6,9,11,12,13,16\}$, the graphs are vertex-transitive, so 1-WL
+assigns every vertex the same color and \emph{all ten classes collapse to a single
+1-WL representation}. Any message-passing GNN therefore cannot exceed $1/10=10\%$
+on the ten-way classification task. In contrast, exact counts of simple cycles by
+length give a distinct signature to each of the ten classes; a linear classifier on
+these substructure features reaches $99.5\%$ accuracy under five-fold
+cross-validation, even with 2\% multiplicative noise added to the counts. The
+contrast, $10\%$ versus $99.5\%$ on the same task, is the entire thesis in one
+example.
+
+\subsection{A cospectral strongly regular pair}
+A sharper case is the Shrikhande graph and the $4\times4$ rook's graph, both
+strongly regular with parameters $(16,6,2,2)$. They are non-isomorphic but share
+the same 1-WL coloring, and, being strongly regular with identical parameters, they
+are cospectral, so no invariant derived from the adjacency spectrum, including
+counts of closed walks, can separate them. Both contain exactly $32$ triangles.
+Yet the number of 4-cliques differs sharply: the rook's graph contains $8$ (one per
+row and column), while the Shrikhande graph contains $0$. A single exact
+substructure count thus distinguishes a pair that defeats 1-WL and every spectral
+feature. This is precisely the quantity a subgraph isomorphism engine returns.
+
+%==============================================================================
+\section{Method: HiPerMotif as an Orbit-Feature Engine}\label{sec:method}
+%==============================================================================
+Our pipeline produces, for a host graph $G$ and a library $\mathcal{H}$ of pattern
+graphs, both graph-level motif counts and per-vertex orbit features, using
+HiPerMotif for all enumeration. The only nontrivial steps are correct
+normalization by pattern symmetry.
+
+\subsection{Patterns, automorphisms, and orbits}
+For each pattern $H\in\mathcal{H}$ we precompute its automorphism group
+$\mathrm{Aut}(H)$ and the partition of $V(H)$ into automorphism \emph{orbits}; two
+pattern vertices are in the same orbit if some automorphism maps one to the other.
+A subgraph isomorphism search reports every distinct mapping, so each embedded copy
+of $H$ in $G$ is found $|\mathrm{Aut}(H)|$ times. The true number of copies is
+therefore the raw count divided by $|\mathrm{Aut}(H)|$. For node features, a host
+vertex's count for a given orbit is similarly divided by the orbit stabilizer size
+$|\mathrm{Aut}(H)|/|\text{orbit}|$ so that each embedded copy contributes once per
+participating vertex. These quantities are small and are computed once per pattern.
+
+\subsection{Extraction with HiPerMotif}
+We build the host and each pattern as Arachne property graphs and invoke
+HiPerMotif through its public interface. With \texttt{return\_isos\_as="count"} the
+engine returns the raw number of isomorphisms, giving graph-level motif counts after
+dividing by $|\mathrm{Aut}(H)|$. With \texttt{return\_isos\_as="vertices"} it
+returns the flattened mappings (length $n\cdot k$ for $k$ embeddings of an
+$n$-vertex pattern) together with a mapper identifying each pattern vertex; tallying
+host vertices by pattern position and collapsing positions within an orbit yields
+per-vertex orbit counts. The \texttt{algorithm\_type="si"} setting selects the
+edge-centric HiPerMotif search, and \texttt{reorder\_type="structural"} the
+structural pattern reordering. Algorithm~\ref{alg:feat} summarizes the procedure.
+
+\begin{algorithm}[t]
+\caption{Exact orbit features via HiPerMotif}
+\label{alg:feat}
+\begin{algorithmic}[1]
+\Require host graph $G$, pattern library $\mathcal{H}$
+\Ensure node-feature matrix $X \in \mathbb{R}^{|V(G)|\times F}$
+\State build Arachne property graph $G_p$ from $G$
+\For{each pattern $H \in \mathcal{H}$}
+  \State compute $\mathrm{Aut}(H)$ and orbits $O_1,\dots,O_r$ \Comment{once, offline}
+  \State build property graph $H_p$ from $H$
+  \State $(\textit{isos},\textit{mapper}) \gets$ \Call{SubgraphIso}{$G_p,H_p$,
+         \texttt{si}, \texttt{structural}, \texttt{vertices}}
+  \State reshape \textit{isos} into $k\times n$ embeddings
+  \For{each orbit $O_j$ with stabilizer $b_j=|\mathrm{Aut}(H)|/|O_j|$}
+    \For{each pattern position $p \in O_j$}
+      \State increment $X[\,\textit{isos}[\cdot,p],\,(H,j)\,]$
+    \EndFor
+    \State $X[:,(H,j)] \gets X[:,(H,j)] / b_j$
+  \EndFor
+\EndFor
+\State \Return $\log(1+X)$ \Comment{motif counts are heavy-tailed}
+\end{algorithmic}
+\end{algorithm}
+
+\subsection{Use in a GNN}
+The orbit feature matrix is concatenated with the GNN's input node features and the
+combined matrix is consumed by any standard architecture. Because the features are
+exact and precomputed, training and inference cost are unchanged relative to the
+base GNN; the added cost is the one-time extraction, which is the quantity we study
+at scale. The features are permutation equivariant by construction, since orbit
+counts depend only on graph structure.
+
+%==============================================================================
+\section{Experimental Methodology}\label{sec:method-exp}
+%==============================================================================
+\textbf{Platform.} All experiments are conducted on Wulver, NJIT's
+Dell-built high performance computing cluster. Each compute node is equipped with
+two AMD EPYC 7713 processors (64 cores each, 128 cores total, 2.0\,GHz) and
+512\,GB of RAM. We report the mean of five independent runs with 95\% confidence
+intervals. \todo{state Chapel version and the Arachne/Arkouda commit used, and the
+CHPL\_* configuration (e.g. CHPL\_TASKS, locale count) for reproducibility.}
+
+\textbf{Host graphs.} \todo{list datasets with $|V|,|E|$: e.g.\ the H01 connectome
+($\sim$147M edges), large citation and web graphs, and the expressivity benchmarks
+(CSL, strongly regular families). Cite dataset sources.}
+
+\textbf{Pattern library.} Motifs up to a chosen size (triangle, wedge, 4-path,
+4-cycle, claw, paw, diamond, 4-clique, and selected 5-vertex patterns), with
+automorphism-orbit normalization as in Sec.~\ref{sec:method}.
+
+\textbf{Baselines.} \todo{(i) the same GNN without substructure features (1-WL
+ceiling); (ii) a learned approximate counter such as DeSCo for the
+accuracy/feature-quality comparison; (iii) for extraction cost, a general parallel
+counter (e.g.\ ESCAPE/PGD) where applicable.}
+
+\textbf{Metrics.} Task accuracy with and without features; extraction time and
+parallel scaling (speedup, efficiency) versus host size and thread count;
+accuracy gained per unit extraction cost across motif families.
+
+%==============================================================================
+\section{Results}\label{sec:results}
+%==============================================================================
+\todo{POPULATE FROM CLUSTER RUNS. The motivating results in Sec.~III are real and
+can anchor the accuracy story; the items below require HiPerMotif on real hardware
+and must not be fabricated:
+(1) extraction time and strong/weak scaling of orbit-feature extraction vs.\ host
+size and thread count;
+(2) GNN accuracy with vs.\ without exact features on the expressivity and
+large-graph benchmarks;
+(3) exact (HiPerMotif) vs.\ learned-approximate (DeSCo) feature quality at matched
+cost;
+(4) the per-motif compute-vs-accuracy frontier.}
+
+\begin{figure}[t]
+\centering
+\figph{Strong-scaling of orbit-feature extraction:\\ time (or throughput) vs.\
+thread count, per motif size.\\ Generate from measured cluster data only.}
+\caption{Scaling of HiPerMotif feature extraction. \todo{real plot}}
+\label{fig:scaling}
+\end{figure}
+
+\begin{table}[t]
+\centering
+\caption{GNN accuracy without vs.\ with exact substructure features.
+\todo{fill from runs}}
+\label{tab:acc}
+\begin{tabular}{lrr}
+\toprule
+Benchmark & GNN (1-WL) & GNN + HiPerMotif features \\
+\midrule
+CSL ($n{=}41$, 10-way) & 10.0\% (chance) & \todo{--} \\
+\todo{large-graph task} & \todo{--} & \todo{--} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\todo{2--3 paragraphs interpreting the real numbers: where exact features help,
+which motifs pay for themselves at scale, and where the extraction cost dominates.
+Be explicit about regimes where the approach is not worthwhile.}
+
+%==============================================================================
+\section{Conclusion}
+%==============================================================================
+Standard GNNs are blind to substructure by construction, and the established fix,
+substructure features, has been limited by the cost of exact counting. We showed
+that a parallel exact subgraph isomorphism engine, HiPerMotif in Arachne, can serve
+as an orbit-feature extractor, with correct automorphism normalization, and we made
+the expressivity payoff concrete on cases that defeat 1-WL and all spectral
+invariants. \todo{one sentence on the strongest measured at-scale result and the
+next step (e.g.\ distributed extraction, or co-selecting motifs to the task).}
+
+\section*{Acknowledgment}
+This research was funded in part by NSF grant numbers CCF-2109988,
+OAC-2402560, and CCF-2453324.
+
+%==============================================================================
+% REFERENCES -- real works, correctly attributed. Verify page numbers/DOIs and
+% finalize against a .bib with IEEEtran style before camera-ready.
+%==============================================================================
+\begin{thebibliography}{1}
+
+\bibitem{dindoost2025hipermotif}
+M.~Dindoost, O.~Alvarado Rodriguez, B.~Bryg, I.~Koutis, and D.~A. Bader,
+``HiPerMotif: Novel parallel subgraph isomorphism in large-scale property graphs,''
+in \emph{Proc. IEEE High Performance Extreme Computing Conf. (HPEC)}, 2025.
+arXiv:2507.04130.
+
+\bibitem{dindoost2024vf2ps}
+M.~Dindoost, O.~Alvarado Rodriguez, S.~Bagchi, P.~Pauliuchenka, Z.~Du, and
+D.~A. Bader,
+``VF2-PS: Parallel and scalable subgraph monomorphism in Arachne,''
+in \emph{Proc. IEEE High Performance Extreme Computing Conf. (HPEC)}, 2024.
+
+\bibitem{rodriguez2022arachne}
+O.~Alvarado Rodriguez, Z.~Du, J.~Patchett, F.~Li, and D.~A. Bader,
+``Arachne: An Arkouda package for large-scale graph analytics,''
+in \emph{Proc. IEEE High Performance Extreme Computing Conf. (HPEC)}, 2022.
+
+\bibitem{merrill2019arkouda}
+M.~Merrill, W.~Reus, and T.~Neumann,
+``Arkouda: NumPy-like arrays at massive scale backed by Chapel,''
+in \emph{Chapel Implementers and Users Workshop (CHIUW)}, 2019.
+
+\bibitem{chamberlain2007chapel}
+B.~L. Chamberlain, D.~Callahan, and H.~P. Zima,
+``Parallel programmability and the Chapel language,''
+\emph{Int. J. High Performance Computing Applications}, vol.~21, no.~3,
+pp.~291--312, 2007.
+
+\bibitem{cordella2004vf2}
+L.~P. Cordella, P.~Foggia, C.~Sansone, and M.~Vento,
+``A (sub)graph isomorphism algorithm for matching large graphs,''
+\emph{IEEE Trans. Pattern Anal. Mach. Intell.}, vol.~26, no.~10,
+pp.~1367--1372, 2004.
+
+\bibitem{xu2019gin}
+K.~Xu, W.~Hu, J.~Leskovec, and S.~Jegelka,
+``How powerful are graph neural networks?''
+in \emph{Int. Conf. on Learning Representations (ICLR)}, 2019.
+
+\bibitem{morris2019}
+C.~Morris, M.~Ritzert, M.~Fey, W.~L. Hamilton, J.~E. Lenssen, G.~Rattan, and
+M.~Grohe,
+``Weisfeiler and Leman go neural: Higher-order graph neural networks,''
+in \emph{AAAI Conf. on Artificial Intelligence}, 2019.
+
+\bibitem{bouritsas2022gsn}
+G.~Bouritsas, F.~Frasca, S.~Zafeiriou, and M.~M. Bronstein,
+``Improving graph neural network expressivity via subgraph isomorphism counting,''
+\emph{IEEE Trans. Pattern Anal. Mach. Intell.}, vol.~45, no.~1, pp.~657--668, 2023.
+
+\bibitem{chen2020count}
+Z.~Chen, L.~Chen, S.~Villar, and J.~Bruna,
+``Can graph neural networks count substructures?''
+in \emph{Advances in Neural Information Processing Systems (NeurIPS)}, 2020.
+
+\bibitem{fu2024desco}
+T.~Fu, C.~Wei, Y.~Wang, and R.~Ying,
+``DeSCo: Towards generalizable and scalable deep subgraph counting,''
+in \emph{ACM Int. Conf. on Web Search and Data Mining (WSDM)}, 2024.
+
+\bibitem{murphy2019relational}
+R.~L. Murphy, B.~Srinivasan, V.~Rao, and B.~Ribeiro,
+``Relational pooling for graph representations,''
+in \emph{Int. Conf. on Machine Learning (ICML)}, 2019.
+
+\bibitem{dwivedi2023benchmarking}
+V.~P. Dwivedi, C.~K. Joshi, A.~T. Luu, T.~Laurent, Y.~Bengio, and X.~Bresson,
+``Benchmarking graph neural networks,''
+\emph{Journal of Machine Learning Research}, vol.~24, pp.~1--48, 2023.
+
+% \bibitem{...} ESCAPE / PGD parallel counters -- add if used as a cost baseline.
+% \bibitem{...} dataset citations (H01 connectome, etc.) -- add for Sec. VI.
+
+\end{thebibliography}
+
+\end{document}

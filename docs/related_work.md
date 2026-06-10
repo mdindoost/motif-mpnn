@@ -4,4 +4,4 @@
 - Graphlet features & kernels: static descriptors; not message-level.
 - Higher-order GNNs (k-GNN, GSN): explicit subgraphs; heavy compute.
 - Our angle: precomputed motif roles as **live signals** in message passing
-  (features, gates, or adjacency mixing) with HiPerXplorer backend.
+  (features, gates, or adjacency mixing) with HiPerMotif backend.

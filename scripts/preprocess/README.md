@@ -1,4 +1,4 @@
-# Precompute with HiPerXplorer — Expected Outputs
+# Precompute with HiPerMotif — Expected Outputs
 
 For each graph (e.g., `cora`), create a folder:
 ```

@@ -1,6 +1,6 @@
 # Motif-Augmented MPNN
 
-Motif-Augmented MPNN (Motif-MPNN) is an experimental graph learning framework where **motif statistics** (exported from [HiPerXplorer](https://github.com/your-org/hiperxplorer)) are injected into Graph Neural Networks to enrich message passing.  
+Motif-Augmented MPNN (Motif-MPNN) is an experimental graph learning framework where **motif statistics** (exported from [HiPerMotif](https://arxiv.org/abs/2507.04130), a parallel subgraph isomorphism engine in the [Arachne](https://github.com/Bears-R-Us/arkouda-njit) framework) are injected into Graph Neural Networks to enrich message passing.  
 
 We build on top of [PyTorch Geometric (PyG)](https://pytorch-geometric.readthedocs.io/), extending standard baselines with motif-aware counterparts:
 
@@ -31,7 +31,7 @@ conda activate motif-mpnn
 ### 2. Datasets
 The repo auto-downloads Planetoid datasets (Cora, Citeseer, Pubmed).
 
-For motif features, place HiPerXplorer exports here:
+For motif features, place HiPerMotif exports here:
 ```bash
 data/precompute/<dataset>/node_motifs.csv
 ```
@@ -197,7 +197,7 @@ src/
 configs/
   experiments/   # YAML configs for reproducible runs
 data/
-  precompute/    # HiPerXplorer motif CSVs + generated caches
+  precompute/    # HiPerMotif motif CSVs + generated caches
 results/
   logs/          # per-run manifests + metrics.csv
 ```

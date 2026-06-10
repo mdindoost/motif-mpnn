@@ -331,7 +331,37 @@ Delete `.pt` files to force a rebuild from the CSV.
 --verify   print sanity stats after writing
 --k/--topk motif_topk written as header comment (default: 10)
 --out-dir  output directory override (default: data/precompute/<dataset>/)
+--features legacy (default: degree/wedge/triangle) | orbit (ORCA graphlet orbits)
+--graphlet-size 4 (default) | 5   (only used with --features orbit)
 ```
+
+### ORCA orbit features (Phase 1a, 2026-06-10)
+
+`--features orbit` is an **additive** backend (the legacy degree/wedge/triangle
+path is byte-for-byte unchanged): it computes per-node ORCA graphlet-orbit counts
+(Hočevar & Demšar 2014; 15 orbits for size-4, 73 for size-5) and writes them to a
+**separate** file `data/precompute/<dataset>/node_motifs_orbit.csv`. Each orbit `o`
+is encoded as `(k = graphlet node count, motif_id = ORCA_ORBIT_BASE + o)` with
+`ORCA_ORBIT_BASE = 2000` — a namespace disjoint from all legacy encodings
+(degree/wedge/triangle 0/2/3, cycles 1000, 4-clique `(4,10)`). `motif_loader.py`
+needs no change (it auto-extends the manifest for unseen `(k, motif_id)`); loader
+*selection* of the orbit CSV is deferred to Phase 1b.
+
+- ORCA source is vendored at `third_party/orca/orca.cpp` (+ `PROVENANCE.md`);
+  the compiled binary `third_party/orca/orca` is gitignored and built on demand
+  by `src/datasets/orca_orbits.py:ensure_orca_built()`.
+- Orbit semantics are **validated against hand-computed oracles** in
+  `tests/test_orca_orbits.py` (K4, C5, isolated node, degree-vs-networkx, and the
+  Shrikhande-vs-4×4-rook SRG pair): orbit 0 = degree, orbit 3 = triangle,
+  orbit 14 = 4-clique. The SRG test confirms 4-clique = 0 (Shrikhande) vs 2/node
+  (rook) — the exact substructure that separates that 1-WL-identical cospectral
+  pair. ORCA is exact, deterministic, single-threaded (no RNG): counts reproduce.
+- **No accuracy claim** is attached to this phase — it is counting infrastructure
+  only. Benchmarks, rand-ablation, and loader wiring are Phase 1b. When HiPerMotif
+  is connected (Phase LAST), ORCA becomes the correctness oracle for its
+  |Aut|-normalized orbit counts. Spec/plan:
+  `docs/superpowers/specs/2026-06-10-orbit-library-1a-design.md`,
+  `docs/superpowers/plans/2026-06-10-orbit-library-1a.md`.
 
 ### verify_motifs.py
 
@@ -393,6 +423,18 @@ Both graphs are strongly regular (16, 6, 2, 2) with identical 1-WL signatures an
 
 **D2 finding:** Aut(H) normalization is a no-op under per-column z-score for single-orbit features. Proven in `tests/test_aut_normalization_noop.py`.
 
+### TU re-validation under the flat-config fix (2026-06-09)
+
+After fixing the flat-style config loader (model hyperparameters were previously dropped; see Section 10 / `config.py`), the TU sweep was re-run to confirm the headline gains survive. **18 runs on GPU (RTX 4070 Ti SUPER), 3 seeds {42, 0, 1}.** Note: the fix is non-regressive for TU because those configs carry no `model:` block, so defaults (hidden=64, layers=2, dropout=0.5) applied before and after — verified by code inspection AND re-run.
+
+| Dataset  | gcn (reval / doc)      | concat (reval / doc)   | concat−gcn (reval / doc) | holds |
+|----------|------------------------|------------------------|--------------------------|-------|
+| PROTEINS | 0.701 ± 0.007 / 0.695  | 0.721 ± 0.012 / 0.728  | +0.020 / +0.033          | ✅    |
+| NCI1     | 0.674 ± 0.005 / 0.674  | 0.712 ± 0.026 / 0.731  | +0.038 / +0.057          | ✅    |
+| ENZYMES  | 0.272 ± 0.051 / 0.264  | 0.331 ± 0.032 / 0.311  | +0.058 / +0.047          | ✅    |
+
+**Verdict:** concat > gcn holds on all three TU datasets; every re-validated mean is within ~0.02 of the documented value (within one seed-std). Caveats (n=3 is a consistency check not a significance claim; NCI1 concat is seed-sensitive, std=0.026; GPU runs carry CUDA scatter nondeterminism and the documented runs' device is unknown). The rand-concat ablation (Section 9 summary table) remains the evidence that the gain is *structural*, not capacity. Per-run `device`/`torch_version`/`cuda_device_name` are now recorded in each run's `manifest.json`.
+
 ---
 
 ## 10. Known Bugs Fixed
@@ -420,6 +462,7 @@ All bugs below were identified and fixed during the 2026-06-06/07 audit.
 ## 11. Known Limitations / Open Questions
 
 **Hardlines (do not change without strong reason):**
+- **Scientific rigor — never guess, simplify away rigor, fabricate, or randomly generate data/results, and never propose a hypothesis without a theoretical or code-verified basis.** Before any claim about code behavior or results, read the actual code/config/output and cite it; do not infer from memory or plausibility. Synthetic data (e.g. CSL) is acceptable only as a theory-defined construct for a theory-grounded purpose, labeled as such — never as real-world evidence. Distinguish theory-forced results from empirically-validated ones. If there is no grounded basis, do nothing until one is established. Evidence before assertions, always.
 - EarlyStopper patience must come from config — never hardcode it in `engine.py`.
 - Graph classification backward pass belongs inside the `for batch in train_loader` loop — not outside.
 - Do not add motif CSVs or `.pt` caches to git — `data/` is gitignored.
