@@ -25,6 +25,38 @@ def _ensure_dir(p: Path):
     p.mkdir(parents=True, exist_ok=True)
 
 
+# Feature-set -> motif CSV filename. Orbit features live in a separate CSV so the
+# legacy degree/wedge/triangle path is untouched (Stage 2).
+FEATURE_SET_FILENAMES = {
+    "legacy": "node_motifs.csv",
+    "orbit": "node_motifs_orbit.csv",
+}
+
+
+def motif_csv_for_features(motif_features: str) -> str:
+    """Map a feature-set name to its motif CSV filename."""
+    try:
+        return FEATURE_SET_FILENAMES[motif_features]
+    except KeyError:
+        raise ValueError(
+            f"unknown motif_features={motif_features!r}; "
+            f"expected one of {list(FEATURE_SET_FILENAMES)}"
+        )
+
+
+def _cache_suffix(motif_filename: str) -> str:
+    """Derive a cache-file suffix from the motif CSV filename so different feature
+    sets never share caches. Default 'node_motifs.csv' -> '' (legacy cache names
+    preserved byte-for-byte); 'node_motifs_orbit.csv' -> '_orbit'.
+    """
+    stem = Path(motif_filename).stem
+    if stem == "node_motifs":
+        return ""
+    if stem.startswith("node_motifs"):
+        return stem[len("node_motifs"):]
+    return "_" + stem
+
+
 
 
 def _read_json(p: Path) -> Optional[Dict]:
@@ -96,13 +128,15 @@ def _infer_manifest_from_csv(df: pd.DataFrame) -> Dict[Tuple[int,int], int]:
     return grouped
 
 
-def build_or_load_node_motif_X(dataset: str, num_nodes: int, precompute_dir: str | Path) -> MotifArtifacts:
+def build_or_load_node_motif_X(dataset: str, num_nodes: int, precompute_dir: str | Path,
+                               motif_filename: str = "node_motifs.csv") -> MotifArtifacts:
     root = Path(precompute_dir)
     _ensure_dir(root)
-    csv_p = root / "node_motifs.csv"
-    cache_p = root / "motif_x.pt"
-    manifest_p = root / "manifest.json"
-    stats_p = root / "stats.json"
+    suffix = _cache_suffix(motif_filename)
+    csv_p = root / motif_filename
+    cache_p = root / f"motif_x{suffix}.pt"
+    manifest_p = root / f"manifest{suffix}.json"
+    stats_p = root / f"stats{suffix}.json"
 
 
     if not csv_p.exists():
@@ -121,7 +155,7 @@ def build_or_load_node_motif_X(dataset: str, num_nodes: int, precompute_dir: str
     required_cols = {"node_id","motif_id","k","count"}
     if not required_cols.issubset(set(df.columns)):
         missing = required_cols - set(df.columns)
-        raise ValueError(f"node_motifs.csv missing columns: {missing}")
+        raise ValueError(f"{motif_filename} missing columns: {missing}")
 
     manifest = _read_json(manifest_p)
     if manifest is None or len(manifest) == 0:
@@ -178,16 +212,18 @@ def build_or_load_node_motif_X(dataset: str, num_nodes: int, precompute_dir: str
     return MotifArtifacts(X=X, stats=stats, manifest=grouped)
 
 
-def build_or_load_tu_motif_list(dataset: str, pyg_dataset, precompute_dir: str | Path) -> MotifArtifacts:
+def build_or_load_tu_motif_list(dataset: str, pyg_dataset, precompute_dir: str | Path,
+                                motif_filename: str = "node_motifs.csv") -> MotifArtifacts:
     """Build a list of per-graph motif matrices aligned to TUDataset order.
     Expects CSV with columns: graph_id,node_id,motif_id,k,count
     """
     root = Path(precompute_dir)
     _ensure_dir(root)
-    csv_p = root / "node_motifs.csv"
-    cache_p = root / "motif_list.pt"
-    manifest_p = root / "manifest.json"
-    stats_p = root / "stats.json"
+    suffix = _cache_suffix(motif_filename)
+    csv_p = root / motif_filename
+    cache_p = root / f"motif_list{suffix}.pt"
+    manifest_p = root / f"manifest{suffix}.json"
+    stats_p = root / f"stats{suffix}.json"
 
 
 
@@ -205,7 +241,7 @@ def build_or_load_tu_motif_list(dataset: str, pyg_dataset, precompute_dir: str |
     required_cols = {"graph_id","node_id","motif_id","k","count"}
     if not required_cols.issubset(set(df.columns)):
         missing = required_cols - set(df.columns)
-        raise ValueError(f"node_motifs.csv missing columns: {missing}")
+        raise ValueError(f"{motif_filename} missing columns: {missing}")
 
 
     manifest = _read_json(manifest_p)

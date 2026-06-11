@@ -6,7 +6,7 @@ import torch
 from torch import Tensor
 from torch_geometric.datasets import Planetoid
 from torch_geometric.utils import index_to_mask
-from src.datasets.motif_loader import build_or_load_node_motif_X
+from src.datasets.motif_loader import build_or_load_node_motif_X, motif_csv_for_features
 
 from src.utils.registry import DATASET_REGISTRY
 
@@ -104,7 +104,8 @@ def _load_planetoid(name: str, root: str, split_seed: int = 42,
 class CoraDataset:
     task = "node"
     def __init__(self, root: str = "data/processed", split_seed: int = 42,
-                 use_public_split: bool = False, **kwargs: Any):
+                 use_public_split: bool = False, motif_features: str = "legacy",
+                 **kwargs: Any):
         self.bundle = _load_planetoid("cora", root, split_seed=split_seed,
                                       use_public_split=use_public_split)
         # convenient shortcuts
@@ -114,7 +115,8 @@ class CoraDataset:
         self.num_classes = self.bundle.num_classes
         # optional motifs (graceful if not present)
         pre_dir = "data/precompute/cora"
-        art = build_or_load_node_motif_X(dataset="cora", num_nodes=self.data.num_nodes, precompute_dir=pre_dir)
+        art = build_or_load_node_motif_X(dataset="cora", num_nodes=self.data.num_nodes, precompute_dir=pre_dir,
+                                         motif_filename=motif_csv_for_features(motif_features))
         self.motif_x = art.X                 # None if not present
         self.motif_stats = art.stats         # {} if not present
         self.motif_manifest = art.manifest   # {} if not present
@@ -124,7 +126,8 @@ class CoraDataset:
 class CiteseerDataset:
     task = "node"
     def __init__(self, root: str = "data/processed", split_seed: int = 42,
-                 use_public_split: bool = False, **kwargs: Any):
+                 use_public_split: bool = False, motif_features: str = "legacy",
+                 **kwargs: Any):
         self.bundle = _load_planetoid("citeseer", root, split_seed=split_seed,
                                       use_public_split=use_public_split)
         self.data = self.bundle.data
@@ -133,7 +136,8 @@ class CiteseerDataset:
         self.num_classes = self.bundle.num_classes
         # optional motifs
         pre_dir = "data/precompute/citeseer"
-        art = build_or_load_node_motif_X(dataset="citeseer", num_nodes=self.data.num_nodes, precompute_dir=pre_dir)
+        art = build_or_load_node_motif_X(dataset="citeseer", num_nodes=self.data.num_nodes, precompute_dir=pre_dir,
+                                         motif_filename=motif_csv_for_features(motif_features))
         self.motif_x = art.X
         self.motif_stats = art.stats
         self.motif_manifest = art.manifest
@@ -142,7 +146,8 @@ class CiteseerDataset:
 class PubmedDataset:
     task = "node"
     def __init__(self, root: str = "data/processed", split_seed: int = 42,
-                 use_public_split: bool = False, **kwargs: Any):
+                 use_public_split: bool = False, motif_features: str = "legacy",
+                 **kwargs: Any):
         self.bundle = _load_planetoid("pubmed", root, split_seed=split_seed,
                                       use_public_split=use_public_split)
         self.data = self.bundle.data
@@ -151,7 +156,8 @@ class PubmedDataset:
         self.num_classes = self.bundle.num_classes
         # optional motifs
         pre_dir = "data/precompute/pubmed"
-        art = build_or_load_node_motif_X(dataset="pubmed", num_nodes=self.data.num_nodes, precompute_dir=pre_dir)
+        art = build_or_load_node_motif_X(dataset="pubmed", num_nodes=self.data.num_nodes, precompute_dir=pre_dir,
+                                         motif_filename=motif_csv_for_features(motif_features))
         self.motif_x = art.X
         self.motif_stats = art.stats
         self.motif_manifest = art.manifest

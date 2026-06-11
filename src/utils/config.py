@@ -38,6 +38,9 @@ class DatasetConfig:
     root: str = "data/processed"
     # When True, use canonical Planetoid public splits for comparability with published baselines
     use_public_split: bool = False
+    # Which motif feature set the loader reads: "legacy" (degree/wedge/triangle,
+    # node_motifs.csv) or "orbit" (ORCA graphlet orbits, node_motifs_orbit.csv).
+    motif_features: str = "legacy"
 
 @dataclass
 class ExperimentConfig:
@@ -153,7 +156,11 @@ def load_config(path: str) -> ExperimentConfig:
 
     # FIX: read use_public_split from top-level flat-style YAML key
     use_public_split_flag = bool(merged.get("use_public_split", False))
-    ds = DatasetConfig(name=ds_name, task=ds_task, root=ds_root, use_public_split=use_public_split_flag)
+    # Stage 2: read motif_features (legacy|orbit) from top-level flat-style YAML key
+    motif_features_flag = str(merged.get("motif_features", "legacy"))
+    ds = DatasetConfig(name=ds_name, task=ds_task, root=ds_root,
+                       use_public_split=use_public_split_flag,
+                       motif_features=motif_features_flag)
     # FIX: build ModelConfig from the merged `model:` block so flat-style configs can
     # override hidden_dim/num_layers/dropout/layer_norm/residual (previously these were
     # silently dropped — only name was read). The resolved name (variant priority) wins.

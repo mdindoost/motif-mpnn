@@ -8,7 +8,7 @@ import torch
 from torch_geometric.datasets import TUDataset
 
 from src.utils.registry import DATASET_REGISTRY
-from src.datasets.motif_loader import build_or_load_tu_motif_list
+from src.datasets.motif_loader import build_or_load_tu_motif_list, motif_csv_for_features
 from src.datasets.tu_wrapper import TUWithMotifs
 
 
@@ -75,14 +75,15 @@ def _load_tu(name: str, root: str, split_seed: int = 42) -> GraphDatasetBundle:
     )
 
 
-def _maybe_wrap_with_motifs(dataset_key: str, base_ds) -> tuple[Any, Dict, Dict]:
+def _maybe_wrap_with_motifs(dataset_key: str, base_ds, motif_features: str = "legacy") -> tuple[Any, Dict, Dict]:
     """
     If motif artifacts exist under data/precompute/{dataset_key}, wrap the dataset
     so each graph's Data carries .motif_x with aligned per-node motif features.
     Returns: (wrapped_or_base, stats, manifest)
     """
     pre_dir = f"data/precompute/{dataset_key.lower()}"
-    art = build_or_load_tu_motif_list(dataset=dataset_key.lower(), pyg_dataset=base_ds, precompute_dir=pre_dir)
+    art = build_or_load_tu_motif_list(dataset=dataset_key.lower(), pyg_dataset=base_ds, precompute_dir=pre_dir,
+                                      motif_filename=motif_csv_for_features(motif_features))
     if art.X_list is not None:
         wrapped = TUWithMotifs(base_ds, art.X_list)  # pads/crops safely if needed
         return wrapped, (art.stats or {}), (art.manifest or {})
@@ -93,12 +94,13 @@ def _maybe_wrap_with_motifs(dataset_key: str, base_ds) -> tuple[Any, Dict, Dict]
 class ProteinsDataset:
     task = "graph"
 
-    def __init__(self, root: str = "data/processed", split_seed: int = 42, **kwargs: Any):
+    def __init__(self, root: str = "data/processed", split_seed: int = 42,
+                 motif_features: str = "legacy", **kwargs: Any):
         # Load base TU and splits
         self.bundle = _load_tu("proteins", root, split_seed=split_seed)
 
         # Optionally wrap with motifs
-        wrapped, stats, manifest = _maybe_wrap_with_motifs("proteins", self.bundle.pyg)
+        wrapped, stats, manifest = _maybe_wrap_with_motifs("proteins", self.bundle.pyg, motif_features)
         self.dataset = wrapped
         self.motif_stats = stats
         self.motif_manifest = manifest
@@ -113,10 +115,11 @@ class ProteinsDataset:
 class NCI1Dataset:
     task = "graph"
 
-    def __init__(self, root: str = "data/processed", split_seed: int = 42, **kwargs: Any):
+    def __init__(self, root: str = "data/processed", split_seed: int = 42,
+                 motif_features: str = "legacy", **kwargs: Any):
         self.bundle = _load_tu("nci1", root, split_seed=split_seed)
 
-        wrapped, stats, manifest = _maybe_wrap_with_motifs("nci1", self.bundle.pyg)
+        wrapped, stats, manifest = _maybe_wrap_with_motifs("nci1", self.bundle.pyg, motif_features)
         self.dataset = wrapped
         self.motif_stats = stats
         self.motif_manifest = manifest
@@ -130,10 +133,11 @@ class NCI1Dataset:
 class ENZYMESDataset:
     task = "graph"
 
-    def __init__(self, root: str = "data/processed", split_seed: int = 42, **kwargs: Any):
+    def __init__(self, root: str = "data/processed", split_seed: int = 42,
+                 motif_features: str = "legacy", **kwargs: Any):
         self.bundle = _load_tu("enzymes", root, split_seed=split_seed)
 
-        wrapped, stats, manifest = _maybe_wrap_with_motifs("enzymes", self.bundle.pyg)
+        wrapped, stats, manifest = _maybe_wrap_with_motifs("enzymes", self.bundle.pyg, motif_features)
         self.dataset = wrapped
         self.motif_stats = stats
         self.motif_manifest = manifest

@@ -17,6 +17,41 @@ import src.datasets  # noqa: F401
 import src.models    # noqa: F401
 
 
+# Canonical all_runs.csv schema (Stage 1, Option A). run_dir replaces the
+# config_path/run_name fields, which remain in each log dir's run_result.json.
+ALL_RUNS_COLUMNS = [
+    "run_dir", "timestamp", "dataset", "variant", "motif_rand",
+    "motif_dim", "seed", "test_acc", "test_macro_f1",
+    "best_val_epoch", "total_epochs",
+]
+
+
+def _append_all_runs_row(all_runs_path: Path, row: dict, columns=ALL_RUNS_COLUMNS) -> None:
+    """Append one run row to all_runs.csv, enforcing the canonical column schema.
+
+    If the file already exists, its header MUST equal ``columns`` exactly;
+    otherwise this raises RuntimeError instead of appending a misaligned row.
+    Silent schema corruption would contaminate the results table (this is the
+    exact bug that produced the malformed legacy rows), so a loud failure is
+    the correct behavior.
+    """
+    all_runs_path.parent.mkdir(parents=True, exist_ok=True)
+    if all_runs_path.exists():
+        with open(all_runs_path, "r", newline="") as f:
+            existing_header = f.readline().rstrip("\r\n").split(",")
+        if existing_header != list(columns):
+            raise RuntimeError(
+                f"all_runs.csv schema mismatch: file header {existing_header} "
+                f"!= writer columns {list(columns)}. Refusing to append a "
+                f"misaligned row; reconcile the schema before rerunning."
+            )
+        write_header = False
+    else:
+        write_header = True
+    pd.DataFrame([row], columns=list(columns)).to_csv(
+        all_runs_path, mode="a", header=write_header, index=False)
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", type=str, required=True,
@@ -54,7 +89,8 @@ def main():
     _split_seed = int(getattr(exp.train, 'seed', 42))
     dataset = DatasetCls(root=exp.dataset.root,
                          use_public_split=getattr(exp.dataset, 'use_public_split', False),
-                         split_seed=_split_seed)
+                         split_seed=_split_seed,
+                         motif_features=getattr(exp.dataset, 'motif_features', 'legacy'))
 
     # Infer dims + task from dataset bundle
     if getattr(dataset, "task", "node") == "node":
@@ -259,16 +295,20 @@ def main():
 
     # ---------------- Task C: append to results/all_runs.csv ----------------
     all_runs_path = Path(exp.save_dir).parent / "all_runs.csv"
-    # Ensure the parent directory exists (it should — save_dir was just created above)
-    all_runs_path.parent.mkdir(parents=True, exist_ok=True)
-    _CSV_COLUMNS = [
-        "timestamp", "config_path", "dataset", "run_name", "variant",
-        "motif_dim", "motif_rand", "test_acc", "test_macro_f1",
-        "best_val_epoch", "total_epochs", "seed",
-    ]
-    row_df = pd.DataFrame([{col: run_result[col] for col in _CSV_COLUMNS}])
-    write_header = not all_runs_path.exists()
-    row_df.to_csv(all_runs_path, mode="a", header=write_header, index=False)
+    csv_row = {
+        "run_dir":        Path(save_dir).name,
+        "timestamp":      run_result["timestamp"],
+        "dataset":        run_result["dataset"],
+        "variant":        run_result["variant"],
+        "motif_rand":     run_result["motif_rand"],
+        "motif_dim":      run_result["motif_dim"],
+        "seed":           run_result["seed"],
+        "test_acc":       run_result["test_acc"],
+        "test_macro_f1":  run_result["test_macro_f1"],
+        "best_val_epoch": run_result["best_val_epoch"],
+        "total_epochs":   run_result["total_epochs"],
+    }
+    _append_all_runs_row(all_runs_path, csv_row)
 
     print("\n" + "=" * 60)
     print("RUN SUMMARY")
