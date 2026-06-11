@@ -1,0 +1,14 @@
+dataset: nci1
+variant: concat
+motif_features: orbit
+run_name: nci1_orbit_concat
+concat:
+  motif_scale: 1.0
+train:
+  epochs: 200
+  patience: 50
+  seed: 42
+  batch_size: 64
+optim:
+  lr: 0.01
+  weight_decay: 0.0

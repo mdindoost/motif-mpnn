@@ -363,6 +363,33 @@ needs no change (it auto-extends the manifest for unseen `(k, motif_id)`); loade
   `docs/superpowers/specs/2026-06-10-orbit-library-1a-design.md`,
   `docs/superpowers/plans/2026-06-10-orbit-library-1a.md`.
 
+### Phase 1b loader wiring + fixed 15-orbit schema (2026-06-10)
+
+The loader now *selects* the feature set via a `dataset.motif_features` config knob
+(`legacy` default | `orbit`), threaded `config.py → run.py → Planetoid/TU datasets →
+motif_loader`. `motif_loader.build_or_load_*` take `motif_filename` (legacy
+`node_motifs.csv` vs `node_motifs_orbit.csv`) and a per-feature-set **cache suffix**
+(`''` legacy / `_orbit`) so the two feature sets never share caches; the legacy path
+is byte-for-byte unchanged (verified: cora_concat legacy reproduces 0.7990 exactly).
+
+**Fixed positional orbit schema (padding).** Orbit features load against a fixed
+15-wide schema (`orbit_fixed_schema()` = orbits 2000–2014 in order). Orbits that are
+**globally absent** in a dataset's CSV are padded as explicit zero columns rather
+than dropped, so every dataset is exactly 15-wide. This is logged, not silent
+(e.g. `nci1: padded 3 globally-absent orbit(s) [2012, 2013, 2014]` — NCI1 molecular
+graphs are clique/diamond-free). Rationale: a fixed positional schema is required for
+(a) cross-dataset tables, (b) the eventual ORCA-vs-HiPerMotif correctness check where
+orbit index must mean the same structure on every dataset, and (c) surfacing "this
+dataset has no 4-clique structure" as explicit zero model input rather than a hidden
+dropped column. Verified: all 6 datasets report `motif_dim=15`, degree-orbit sanity
+passes, NCI1's 3 padded columns are exactly zero, no NaN.
+
+The `all_runs.csv` writer is also hardened (`run.py:_append_all_runs_row`): canonical
+11-column schema (`run_dir,timestamp,dataset,variant,motif_rand,motif_dim,seed,
+test_acc,test_macro_f1,best_val_epoch,total_epochs`), and it **raises on any header
+mismatch** instead of appending a misaligned row (the bug that produced the malformed
+legacy rows now archived in `results/all_runs_legacy_malformed.csv`).
+
 ### verify_motifs.py
 
 ```bash

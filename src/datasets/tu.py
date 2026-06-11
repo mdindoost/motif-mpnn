@@ -8,7 +8,9 @@ import torch
 from torch_geometric.datasets import TUDataset
 
 from src.utils.registry import DATASET_REGISTRY
-from src.datasets.motif_loader import build_or_load_tu_motif_list, motif_csv_for_features
+from src.datasets.motif_loader import (
+    build_or_load_tu_motif_list, motif_csv_for_features, motif_schema_for_features,
+)
 from src.datasets.tu_wrapper import TUWithMotifs
 
 
@@ -83,7 +85,8 @@ def _maybe_wrap_with_motifs(dataset_key: str, base_ds, motif_features: str = "le
     """
     pre_dir = f"data/precompute/{dataset_key.lower()}"
     art = build_or_load_tu_motif_list(dataset=dataset_key.lower(), pyg_dataset=base_ds, precompute_dir=pre_dir,
-                                      motif_filename=motif_csv_for_features(motif_features))
+                                      motif_filename=motif_csv_for_features(motif_features),
+                                      fixed_schema=motif_schema_for_features(motif_features))
     if art.X_list is not None:
         wrapped = TUWithMotifs(base_ds, art.X_list)  # pads/crops safely if needed
         return wrapped, (art.stats or {}), (art.manifest or {})

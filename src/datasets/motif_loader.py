@@ -57,6 +57,41 @@ def _cache_suffix(motif_filename: str) -> str:
     return "_" + stem
 
 
+def orbit_fixed_schema() -> List[Tuple[int, int]]:
+    """Canonical fixed positional schema for ORCA size-4 orbit features: the 15
+    (k, motif_id) pairs for orbits 0..14 in order. Loading orbit features against
+    this fixed schema makes every dataset present the SAME 15-wide orbit matrix,
+    with globally-absent orbits padded as explicit zero columns (e.g. NCI1 is
+    clique/diamond-free, so orbits 2012-2014 are structurally zero but kept in
+    their positions). A fixed positional schema is required for cross-dataset
+    tables, for the eventual ORCA-vs-HiPerMotif correctness check (orbit index
+    must mean the same structure on every dataset), and to surface "no 4-clique
+    structure" as explicit zero input rather than a dropped column.
+    """
+    from src.datasets.orca_orbits import N_ORBITS, orbit_to_km
+    return [orbit_to_km(o) for o in range(N_ORBITS[4])]
+
+
+def motif_schema_for_features(motif_features: str) -> Optional[List[Tuple[int, int]]]:
+    """Fixed (k, motif_id) schema for a feature set, or None to infer from the CSV.
+    Orbit features use the fixed 15-wide positional schema; legacy infers from CSV.
+    """
+    if motif_features == "orbit":
+        return orbit_fixed_schema()
+    return None
+
+
+def _log_padded_orbits(dataset: str, df: pd.DataFrame, flat: Dict[Tuple[int, int], int]) -> None:
+    """Emit a one-line note when a fixed schema contains orbits that never appear
+    in this dataset's CSV (padded to zero). A documented scientific fact, not a
+    silent fill."""
+    present = set(map(tuple, df[["k", "motif_id"]].drop_duplicates().itertuples(index=False, name=None)))
+    absent = sorted(m for (k, m) in flat if (k, m) not in present)
+    if absent:
+        print(f"[motif_loader] {dataset}: padded {len(absent)} globally-absent orbit(s) "
+              f"{absent} to zero column(s) — structurally absent across this dataset.")
+
+
 
 
 def _read_json(p: Path) -> Optional[Dict]:
@@ -129,7 +164,8 @@ def _infer_manifest_from_csv(df: pd.DataFrame) -> Dict[Tuple[int,int], int]:
 
 
 def build_or_load_node_motif_X(dataset: str, num_nodes: int, precompute_dir: str | Path,
-                               motif_filename: str = "node_motifs.csv") -> MotifArtifacts:
+                               motif_filename: str = "node_motifs.csv",
+                               fixed_schema: Optional[List[Tuple[int, int]]] = None) -> MotifArtifacts:
     root = Path(precompute_dir)
     _ensure_dir(root)
     suffix = _cache_suffix(motif_filename)
@@ -157,19 +193,27 @@ def build_or_load_node_motif_X(dataset: str, num_nodes: int, precompute_dir: str
         missing = required_cols - set(df.columns)
         raise ValueError(f"{motif_filename} missing columns: {missing}")
 
-    manifest = _read_json(manifest_p)
-    if manifest is None or len(manifest) == 0:
-        manifest = _infer_manifest_from_csv(df)
-        _write_json(manifest_p, manifest)
-    flat = _flatten_manifest(manifest)
-    M = 1 + max(flat.values()) if flat else 0
-    if M == 0:
-        # No motifs? create dummy zero matrix
-        X = torch.zeros((num_nodes, 0), dtype=torch.float32)
-        stats = {"log1p_mean": [], "log1p_std": []}
-        torch.save(X, cache_p)
-        _write_json(stats_p, stats)
-        return MotifArtifacts(X=X, stats=stats, manifest=manifest)
+    if fixed_schema is not None:
+        # Fixed positional schema (e.g. 15 ORCA orbits): every dataset is the same
+        # width; orbits absent from the CSV become explicit zero columns (padding).
+        flat = {tuple(km): i for i, km in enumerate(fixed_schema)}
+        M = len(fixed_schema)
+        _log_padded_orbits(dataset, df, flat)
+        manifest = None  # rebuilt from `flat` below
+    else:
+        manifest = _read_json(manifest_p)
+        if manifest is None or len(manifest) == 0:
+            manifest = _infer_manifest_from_csv(df)
+            _write_json(manifest_p, manifest)
+        flat = _flatten_manifest(manifest)
+        M = 1 + max(flat.values()) if flat else 0
+        if M == 0:
+            # No motifs? create dummy zero matrix
+            X = torch.zeros((num_nodes, 0), dtype=torch.float32)
+            stats = {"log1p_mean": [], "log1p_std": []}
+            torch.save(X, cache_p)
+            _write_json(stats_p, stats)
+            return MotifArtifacts(X=X, stats=stats, manifest=manifest)
 
 
     # Build sparse COO
@@ -178,7 +222,11 @@ def build_or_load_node_motif_X(dataset: str, num_nodes: int, precompute_dir: str
         node = int(r["node_id"]) ; k = int(r["k"]) ; motif = int(r["motif_id"]) ; c = float(r["count"])
         col = flat.get((k, motif))
         if col is None:
-            # unseen (k,motif) -> extend mapping
+            if fixed_schema is not None:
+                raise ValueError(
+                    f"{motif_filename}: (k,motif_id)=({k},{motif}) not in the fixed "
+                    f"{M}-orbit schema; CSV and schema disagree.")
+            # unseen (k,motif) -> extend mapping (legacy)
             col = M
             flat[(k, motif)] = col
             M += 1
@@ -213,7 +261,8 @@ def build_or_load_node_motif_X(dataset: str, num_nodes: int, precompute_dir: str
 
 
 def build_or_load_tu_motif_list(dataset: str, pyg_dataset, precompute_dir: str | Path,
-                                motif_filename: str = "node_motifs.csv") -> MotifArtifacts:
+                                motif_filename: str = "node_motifs.csv",
+                                fixed_schema: Optional[List[Tuple[int, int]]] = None) -> MotifArtifacts:
     """Build a list of per-graph motif matrices aligned to TUDataset order.
     Expects CSV with columns: graph_id,node_id,motif_id,k,count
     """
@@ -244,12 +293,19 @@ def build_or_load_tu_motif_list(dataset: str, pyg_dataset, precompute_dir: str |
         raise ValueError(f"{motif_filename} missing columns: {missing}")
 
 
-    manifest = _read_json(manifest_p)
-    if manifest is None or len(manifest) == 0:
-        manifest = _infer_manifest_from_csv(df)
-        _write_json(manifest_p, manifest)
-    flat = _flatten_manifest(manifest)
-    M = 1 + max(flat.values()) if flat else 0
+    if fixed_schema is not None:
+        # Fixed positional schema (15 ORCA orbits): same width on every dataset;
+        # orbits absent from the CSV become explicit zero columns (padding).
+        flat = {tuple(km): i for i, km in enumerate(fixed_schema)}
+        M = len(fixed_schema)
+        _log_padded_orbits(dataset, df, flat)
+    else:
+        manifest = _read_json(manifest_p)
+        if manifest is None or len(manifest) == 0:
+            manifest = _infer_manifest_from_csv(df)
+            _write_json(manifest_p, manifest)
+        flat = _flatten_manifest(manifest)
+        M = 1 + max(flat.values()) if flat else 0
 
 
     # Determine per-graph node counts from dataset
@@ -271,6 +327,10 @@ def build_or_load_tu_motif_list(dataset: str, pyg_dataset, precompute_dir: str |
                 node = int(r["node_id"]) ; k = int(r["k"]) ; motif = int(r["motif_id"]) ; c = float(r["count"])
                 col = flat.get((k, motif))
                 if col is None:
+                    if fixed_schema is not None:
+                        raise ValueError(
+                            f"{motif_filename}: (k,motif_id)=({k},{motif}) not in the fixed "
+                            f"{M}-orbit schema; CSV and schema disagree.")
                     col = M
                     flat[(k, motif)] = col
                     M += 1

@@ -6,7 +6,9 @@ import torch
 from torch import Tensor
 from torch_geometric.datasets import Planetoid
 from torch_geometric.utils import index_to_mask
-from src.datasets.motif_loader import build_or_load_node_motif_X, motif_csv_for_features
+from src.datasets.motif_loader import (
+    build_or_load_node_motif_X, motif_csv_for_features, motif_schema_for_features,
+)
 
 from src.utils.registry import DATASET_REGISTRY
 
@@ -116,7 +118,8 @@ class CoraDataset:
         # optional motifs (graceful if not present)
         pre_dir = "data/precompute/cora"
         art = build_or_load_node_motif_X(dataset="cora", num_nodes=self.data.num_nodes, precompute_dir=pre_dir,
-                                         motif_filename=motif_csv_for_features(motif_features))
+                                         motif_filename=motif_csv_for_features(motif_features),
+                                         fixed_schema=motif_schema_for_features(motif_features))
         self.motif_x = art.X                 # None if not present
         self.motif_stats = art.stats         # {} if not present
         self.motif_manifest = art.manifest   # {} if not present
@@ -137,7 +140,8 @@ class CiteseerDataset:
         # optional motifs
         pre_dir = "data/precompute/citeseer"
         art = build_or_load_node_motif_X(dataset="citeseer", num_nodes=self.data.num_nodes, precompute_dir=pre_dir,
-                                         motif_filename=motif_csv_for_features(motif_features))
+                                         motif_filename=motif_csv_for_features(motif_features),
+                                         fixed_schema=motif_schema_for_features(motif_features))
         self.motif_x = art.X
         self.motif_stats = art.stats
         self.motif_manifest = art.manifest
@@ -157,7 +161,8 @@ class PubmedDataset:
         # optional motifs
         pre_dir = "data/precompute/pubmed"
         art = build_or_load_node_motif_X(dataset="pubmed", num_nodes=self.data.num_nodes, precompute_dir=pre_dir,
-                                         motif_filename=motif_csv_for_features(motif_features))
+                                         motif_filename=motif_csv_for_features(motif_features),
+                                         fixed_schema=motif_schema_for_features(motif_features))
         self.motif_x = art.X
         self.motif_stats = art.stats
         self.motif_manifest = art.manifest

@@ -1,0 +1,15 @@
+dataset: enzymes
+variant: concat
+motif_features: orbit
+motif_rand: true
+run_name: enzymes_orbit_rand_concat
+concat:
+  motif_scale: 1.0
+train:
+  epochs: 200
+  patience: 50
+  seed: 42
+  batch_size: 64
+optim:
+  lr: 0.01
+  weight_decay: 0.0

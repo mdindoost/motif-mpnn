@@ -1,0 +1,13 @@
+dataset: citeseer
+variant: concat
+motif_features: orbit
+motif_rand: true
+run_name: citeseer_orbit_rand_concat
+train:
+  epochs: 200
+  patience: 50
+  seed: 42 # for reproducibility
+optim:
+  lr: 0.01
+  weight_decay: 0.0
+use_public_split: true
