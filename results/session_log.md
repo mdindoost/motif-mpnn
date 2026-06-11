@@ -151,3 +151,58 @@ All runs: motif_dim=3 (degree + wedge + triangle), same splits as Phase 1.
 ---
 
 <!-- Phase 3 ablation results appended below after Checkpoint B approval -->
+
+---
+
+## Phase 1b: Orbit Feature Sweep (2026-06-10)
+
+**Foundation (pre-sweep):** all_runs.csv cleaned to 106 rows (22 malformed 12-col
+rows archived to all_runs_legacy_malformed.csv); run.py writer hardened to a guarded
+11-col schema; GIN validated on Cora (0.803) — ceiling claim now load-bearing;
+loader wired with `motif_features: legacy|orbit` + fixed 15-orbit padding schema;
+6 orbit CSVs generated and verified (all 15-wide, NCI1 pads orbits 2012–2014).
+
+**Sweep:** 4 conditions × 6 datasets × 3 seeds {42,0,1}. Conditions 1–2 (gcn,
+legacy-concat) reused — all present, none rerun. Conditions 3–4 (orbit_concat,
+orbit_rand_concat) run fresh via `sweep.py --seeds 42 0 1` = 36 runs. all_runs.csv:
+106 → 142, clean 11-col throughout.
+
+| Condition | status | note |
+|-----------|--------|------|
+| gcn (baseline) | reused | 18 rows present (6×3) |
+| concat (legacy-3) | reused | 18 rows present (6×3) |
+| orbit_concat | DONE | 18 runs, all motif_dim=15 |
+| orbit_rand_concat | DONE | 18 runs, capacity-matched 15-wide noise |
+
+**Pillars:** P1 (orbit > gcn) 4/6 · **P2a (orbit > random) 5/6** · P2b (orbit > legacy-3) 2/6.
+
+**Open observations:**
+- citeseer is the only Pillar-2a failure (random ≥ orbit) — orbit features add nothing there.
+- pubmed: orbit hurts vs gcn (−0.048) yet beats random (+0.094) — structurally meaningful but net-harmful (node-feature-dominated task); a real negative result, not hidden.
+- Pillar 2b is weak: cheap 3 features capture most of the gain; richer 15-orbit beats them significantly only on cora + enzymes. NCI1 (clique-free) is a clean negative control (C≈0, n.s.).
+- Awaiting user interpretation at checkpoint before any further work.
+
+Full analysis + A/B/C table: `results/findings.md` (Phase 1b section);
+LaTeX: `results/tables/phase1b_orbit.tex`.
+
+---
+
+## CSL 99.5% claim — reproduced in code (2026-06-11)
+
+Closed the gap where the paper's Section III "99.5% under 5-fold CV with 2% noise"
+claim had no runnable experiment (only pairwise-distinctness was tested). New
+`scripts/expressivity/csl_linear_cv.py` + `tests/test_csl_linear_cv.py`: a LINEAR
+classifier (multinomial logistic regression) on per-graph cycle-spectrum features
+(simple-cycle counts, lengths 3..8), stratified 5-fold CV, deterministic (seed 0).
+CSL labeled throughout as a synthetic theory-defined construct, not real-world evidence.
+
+**Actual numbers** (`results/expressivity_csl_linear_cv.json`):
+- CLEAN 5-fold CV: **1.0000 ± 0.0000** (10 distinct class signatures → exact separation)
+- 2%-noise 5-fold CV: **1.0000 ± 0.0000** (mean over 20 noise realizations × 5 folds;
+  noise model `feature *= (1 + 0.02 * N(0,1))`)
+- Sanity (degradation curve, confirms not leakage): 10% noise → 0.980, 30% → 0.767,
+  60% → 0.569, 100% → 0.404.
+
+**vs draft:** the real reproducible number is **100.0%**, slightly *above* the draft's
+99.5% — the claim is confirmed and conservative. FLAGGED for the user to update
+`hipermotif-gnn-hpec2026.tex` wording (number not edited by Claude).

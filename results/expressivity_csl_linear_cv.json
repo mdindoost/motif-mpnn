@@ -1,0 +1,25 @@
+{
+  "construct": "CSL (synthetic, theory-defined; expressivity demo, not real-world evidence)",
+  "n_graphs": 150,
+  "n_classes": 10,
+  "n_features": 6,
+  "feature": "simple-cycle counts, lengths 3..8",
+  "classifier": "multinomial logistic regression (linear)",
+  "clean_mean": 1.0,
+  "clean_std": 0.0,
+  "clean_folds": [
+    1.0,
+    1.0,
+    1.0,
+    1.0,
+    1.0
+  ],
+  "noisy_mean": 1.0,
+  "noisy_std": 0.0,
+  "noise_model": "feature *= (1 + 0.02 * N(0,1)) per element",
+  "noise_std": 0.02,
+  "n_noise_realizations": 20,
+  "n_folds": 5,
+  "seed": 0,
+  "l_max": 8
+}
