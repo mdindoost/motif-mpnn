@@ -462,6 +462,54 @@ After fixing the flat-style config loader (model hyperparameters were previously
 
 **Verdict:** concat > gcn holds on all three TU datasets; every re-validated mean is within ~0.02 of the documented value (within one seed-std). Caveats (n=3 is a consistency check not a significance claim; NCI1 concat is seed-sensitive, std=0.026; GPU runs carry CUDA scatter nondeterminism and the documented runs' device is unknown). The rand-concat ablation (Section 9 summary table) remains the evidence that the gain is *structural*, not capacity. Per-run `device`/`torch_version`/`cuda_device_name` are now recorded in each run's `manifest.json`.
 
+### Phase 1b: Exact orbit-feature results (2026-06-10/11)
+
+The paper's core local empirical table: exact ORCA graphlet-orbit features (15
+per-vertex orbits) vs GCN, the legacy 3-feature set, and a capacity-matched random
+control. 4 conditions × 6 datasets × 3 seeds {42,0,1}; all conditions share identical
+hyperparameters (feature set is the sole variable); orbit features use the fixed
+15-wide schema (NCI1 pads orbits 2012–2014). Full analysis + prose in
+`results/findings.md` ("Phase 1b" section); LaTeX in `results/tables/phase1b_orbit.tex`.
+
+| Dataset | GCN | Legacy-3 | Orbit-15 | Orbit-Rand | A=O−GCN | B=O−Rand | C=O−Legacy |
+|---------|-----|----------|----------|-----------|---------|----------|------------|
+| Cora     | 0.785 | 0.778 | 0.797 | 0.758 | +0.011\* | +0.039\* | +0.018\* |
+| Citeseer | 0.664 | 0.663 | 0.655 | 0.662 | −0.009\* | −0.007 | −0.008 |
+| Pubmed   | 0.753 | 0.760 | 0.705 | 0.611 | −0.048\* | +0.094\* | −0.055\* |
+| PROTEINS | 0.695 | 0.728 | 0.731 | 0.646 | +0.036\* | +0.086\* | +0.003 |
+| NCI1     | 0.674 | 0.731 | 0.743 | 0.601 | +0.069\* | +0.141\* | +0.011 |
+| ENZYMES  | 0.264 | 0.311 | 0.356 | 0.206 | +0.092\* | +0.150\* | +0.044\* |
+
+`*` = |gap| > 1 std of the relevant baseline (conservative, N=3). A = does exact
+structure beat nothing; B = is the gain structural (vs random); C = does richer exact
+beat cheap exact.
+
+**Locked interpretation (do not overclaim — this framing is final):**
+- **Confirmed local contributions: Pillar 1 (orbit > GCN, 4/6) and Pillar 2a (orbit >
+  random, 5/6).** Pillar 2a is the validity backbone: the gain is capacity-independent,
+  significant on all datasets except citeseer, large on graph tasks (B = +0.086…+0.150).
+- **Pillar 2b (orbit-15 > legacy-3) is weak locally (2/6) and is NOT a paper claim.**
+  The cheap degree/wedge/triangle features capture most of the *local* structural gain.
+  C ≈ 0 locally **motivates the at-scale experiment** (higher-order orbits are sparse on
+  small graphs, abundant on large hosts — HiPerMotif's regime); it does not undercut the
+  library. **Never frame the paper as "15 beats 3."**
+- **The honest headline claim:** *exact structural features provide a real,
+  capacity-independent benefit that tracks graph density, validated against a canonical
+  oracle (ORCA).*
+- **Mechanistic discussion points:** (1) density gradient — gains track orbit
+  participation density (ENZYMES/PROTEINS densest → largest; Citeseer sparsest → only
+  miss); (2) **NCI1 clean negative control** — strong A/B but C≈0 because its 3 extra
+  orbits over legacy are the zero clique/diamond family; (3) **Pubmed boundary case** —
+  orbit hurts vs GCN (−0.048) yet beats random (+0.094): structural signal real but
+  dilutes strong native node features.
+- **Two honest negatives, stated plainly (not buried):** Pubmed orbit is net-harmful vs
+  GCN; Citeseer orbit confers no benefit on any axis.
+
+Provenance: `all_runs.csv` is the canonical 11-col table (142 rows: 105 original + GIN +
+36 Phase-1b); the hardened writer (`run.py:_append_all_runs_row`) held clean through all
+36 appends. Conditions distinguished in `all_runs.csv` by `run_dir` + `motif_dim`
+(legacy concat=3, orbit=15) since all share `variant=concat`.
+
 ---
 
 ## 10. Known Bugs Fixed

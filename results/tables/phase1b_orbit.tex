@@ -1,0 +1,27 @@
+% Phase 1b: Exact ORCA orbit features vs baselines (mean +/- std, N=3 seeds {42,0,1})
+% Conditions share identical hyperparameters; only the feature set varies.
+% A = Orbit-15 - GCN; B = Orbit-15 - Orbit-Rand (capacity control); C = Orbit-15 - Legacy-3.
+% * = |gap| exceeds 1 std of the relevant baseline (conservative, N=3).
+\begin{table*}[t]
+  \centering
+  \caption{Exact graphlet-orbit features (Orbit-15) vs.\ no features (GCN), the
+  legacy 3-feature set (Legacy-3), and a capacity-matched random control
+  (Orbit-Rand). Test accuracy, mean $\pm$ std over 3 seeds. $A$: does exact
+  structure beat nothing? $B$: is the gain structural, not capacity? $C$: does
+  richer exact beat cheap exact? \mbox{$*$}: $|$gap$|$ exceeds one std of the
+  relevant baseline.}
+  \label{tab:phase1b_orbit}
+  \begin{tabular}{llccccccc}
+    \toprule
+    Dataset & Task & GCN & Legacy-3 & Orbit-15 & Orbit-Rand & $A{=}$O$-$GCN & $B{=}$O$-$Rand & $C{=}$O$-$Legacy \\
+    \midrule
+    Cora     & node  & $0.785 \pm 0.004$ & $0.778 \pm 0.018$ & $\mathbf{0.797 \pm 0.002}$ & $0.758 \pm 0.013$ & $+0.011^{*}$ & $+0.039^{*}$ & $+0.018^{*}$ \\
+    Citeseer & node  & $0.664 \pm 0.006$ & $0.663 \pm 0.011$ & $0.655 \pm 0.010$ & $0.662 \pm 0.011$ & $-0.009^{*}$ & $-0.007$ & $-0.008$ \\
+    Pubmed   & node  & $0.753 \pm 0.012$ & $0.760 \pm 0.001$ & $0.705 \pm 0.016$ & $0.611 \pm 0.036$ & $-0.048^{*}$ & $+0.094^{*}$ & $-0.055^{*}$ \\
+    \midrule
+    PROTEINS & graph & $0.695 \pm 0.022$ & $0.728 \pm 0.023$ & $\mathbf{0.731 \pm 0.011}$ & $0.646 \pm 0.003$ & $+0.036^{*}$ & $+0.086^{*}$ & $+0.003$ \\
+    NCI1     & graph & $0.674 \pm 0.009$ & $0.731 \pm 0.018$ & $\mathbf{0.743 \pm 0.018}$ & $0.601 \pm 0.012$ & $+0.069^{*}$ & $+0.141^{*}$ & $+0.011$ \\
+    ENZYMES  & graph & $0.264 \pm 0.043$ & $0.311 \pm 0.027$ & $\mathbf{0.356 \pm 0.057}$ & $0.206 \pm 0.005$ & $+0.092^{*}$ & $+0.150^{*}$ & $+0.044^{*}$ \\
+    \bottomrule
+  \end{tabular}
+\end{table*}
