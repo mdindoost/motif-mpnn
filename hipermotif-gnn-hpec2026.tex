@@ -215,8 +215,8 @@ pattern vertices are in the same orbit if some automorphism maps one to the othe
 A subgraph isomorphism search reports every distinct mapping, so each embedded copy
 of $H$ in $G$ is found $|\mathrm{Aut}(H)|$ times. The true number of copies is
 therefore the raw count divided by $|\mathrm{Aut}(H)|$. For node features, a host
-vertex's count for a given orbit is similarly divided by the orbit stabilizer size
-$|\mathrm{Aut}(H)|/|\text{orbit}|$ so that each embedded copy contributes once per
+vertex's per-orbit tally, summed over all of the orbit's positions, is similarly
+divided by the full $|\mathrm{Aut}(H)|$ so that each embedded copy contributes once per
 participating vertex. These quantities are small and are computed once per pattern.
 
 \subsection{Extraction with HiPerMotif}
@@ -244,8 +244,8 @@ structural pattern reordering. Algorithm~\ref{alg:feat} summarizes the procedure
   \State $(\textit{isos},\textit{mapper}) \gets$ \Call{SubgraphIso}{$G_p,H_p$,
          \texttt{si}, \texttt{structural}, \texttt{vertices}}
   \State reshape \textit{isos} into $k\times n$ embeddings
-  \For{each orbit $O_j$ with stabilizer $b_j=|\mathrm{Aut}(H)|/|O_j|$}
-    \For{each pattern position $p \in O_j$}
+  \For{each orbit $O_j$ with divisor $b_j=|\mathrm{Aut}(H)|$}
+    \For{each pattern position $p \in O_j$} \Comment{collapse positions within the orbit}
       \State increment $X[\,\textit{isos}[\cdot,p],\,(H,j)\,]$
     \EndFor
     \State $X[:,(H,j)] \gets X[:,(H,j)] / b_j$
