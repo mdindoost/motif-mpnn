@@ -585,9 +585,21 @@ Invoke via the Arachne property-graph interface:
 - `return_isos_as="vertices"` → flattened mappings (length `n·k` for `k` embeddings of an `n`-vertex pattern) + a mapper identifying each pattern vertex → tally host vertices by pattern position, collapse positions within an orbit → per-vertex orbit counts.
 - `algorithm_type="si"` selects the edge-centric HiPerMotif search; `reorder_type="structural"` selects structural pattern reordering.
 
-### Orbit-feature normalization (the only nontrivial math)
+### Orbit-feature normalization (the only nontrivial math) — CORRECTED 2026-06-12
 
-For each pattern `H`: precompute `Aut(H)` and the partition of `V(H)` into automorphism orbits `O_1..O_r`. Each embedded copy is reported `|Aut(H)|` times, so true copies = raw count / `|Aut(H)|`. For per-vertex features, divide an orbit's count by the stabilizer size `b_j = |Aut(H)| / |O_j|` so each copy contributes once per participating vertex. Final feature is `log(1+X)` (heavy-tailed) — consistent with the existing `log1p`+z-score normalization in `motif_loader.py`. See Algorithm 1 in the proposal.
+For each pattern `H`: precompute `Aut(H)` and the partition of `V(H)` into automorphism orbits `O_1..O_r`. Each embedded copy is reported `|Aut(H)|` times, so true copies = raw count / `|Aut(H)|`. **For per-vertex features: COLLAPSE (sum) the per-vertex embedding tallies over all pattern positions in an orbit `O_j`, then divide by the FULL `|Aut(H)|` — NOT by the stabilizer `|Aut(H)|/|O_j|`.** Dividing the collapsed tally by the stabilizer over-counts by exactly `|O_j|`. Worked K4 calibration (each equals the ORCA truth): degree `6/|Aut(K2)|=2 → 3`; triangle `18/|Aut(C3)|=6 → 3`; 4-clique `24/|Aut(K4)|=24 → 1`. The prose intent "each copy contributes once per participating vertex" is correct and matches `÷|Aut(H)|`; only the *formula* `b_j=|Aut|/|O_j|` (as written in the proposal's Algorithm 1, `hipermotif-gnn-hpec2026.tex` lines 218/247/251) is the typo — flagged for separate paper correction. Final feature is `log(1+X)` (heavy-tailed) — consistent with the `log1p`+z-score in `motif_loader.py`.
+
+### HiPerMotif backend + equivalence gate (built & locally validated 2026-06-12)
+
+The backend is **built and unit-tested locally**; only the Wulver equivalence run + scale experiments remain. Files:
+- `src/datasets/hipermotif_patterns.py` — the 9 size-4 graphlets, exact `|Aut(H)|` and orbit partitions (via networkx), the **ORCA-verified** orbit→graphlet table, and `normalize_embeddings()` (collapse positions → `÷|Aut|`). Pure numpy/networkx (no arkouda) so it is unit-testable. Includes `induced_embeddings()` — a local networkx oracle that reproduces exactly what `ar.subgraph_isomorphism(..., return_isos_as="vertices")` returns.
+- `src/datasets/hipermotif_backend.py` — `count_orbits_hipermotif(edges, n) -> [n,15]`, a drop-in for `orca_orbits.count_orbits`. **Import-guarded**: imports cleanly without arkouda/arachne; raises a clear "requires Wulver" error only when invoked.
+- `scripts/preprocess/generate_motifs.py --features orbit --backend {orca,hipermotif}` — default `orca`; `hipermotif` writes the identical `node_motifs_orbit.csv` schema.
+- `scripts/wulver/verify_hipermotif_equals_orca.py` — **the GATE; run FIRST on Wulver**, only proceed to scale if all-PASS (exits nonzero on mismatch).
+
+**Verified conventions (confirmed on Wulver; build to exactly these):** `ar.subgraph_isomorphism` is **induced** (NOT `subgraph_monomorphism`); host + pattern loaded **symmetrized** (each undirected edge both directions); returns `(induced copies) × |Aut(H)|`; API `ar.subgraph_isomorphism(G, H, return_isos_as="vertices", algorithm_type="si", reorder_type="structural")` — `structural` returns ORIGINAL host IDs (no remap); `result[0]` is a flat array of length `num_embeddings × n_pattern_vertices`, reshape to `[num_embeddings, n_pattern_vertices]`, column j = pattern vertex j.
+
+**ORCA-verified orbit → graphlet map (orbit, pattern, positions, |Aut|=divisor):** 0 edge {0,1} 2 (degree); 1 p3 ends 2; 2 p3 center 2; 3 triangle 6; 4 p4 ends 2; 5 p4 inner 2; 6 claw leaves 6; 7 claw center 6; **8 c4 8 (4-cycle)**; 9 paw pendant 2; 10 paw base 2; 11 paw hub 2; 12 diamond deg2 4; 13 diamond deg3 4; 14 k4 24 (4-clique). This was **discovered by matching to ORCA**, not trusted from the Hočevar–Demšar figure — the figure-based design-doc guesses for orbits 8–13 were wrong (e.g. 4-cycle is orbit 8, not 10). Local proof: `tests/test_hipermotif_patterns.py` asserts byte-exact equality with ORCA on all 15 columns over K4/C5/random/Petersen, plus `|Aut|` values and the K4 anchors.
 
 ### Direction this enables (beyond the current 3-feature library)
 

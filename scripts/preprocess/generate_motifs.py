@@ -256,20 +256,26 @@ def _count_substructures_single(g_nx, num_nodes: int):
     return rows
 
 
-def _count_orbits_single(g_nx, num_nodes: int, graphlet_size: int = 4):
-    """Per-node ORCA orbit rows: (node_id, k, motif_id, count) for nonzero counts.
+def _count_orbits_single(g_nx, num_nodes: int, graphlet_size: int = 4, backend: str = "orca"):
+    """Per-node orbit rows: (node_id, k, motif_id, count) for nonzero counts.
 
-    Each orbit o -> (k = graphlet node count, motif_id = 2000 + o), disjoint from
-    all legacy encodings. ORCA is exact/deterministic (see src/datasets/orca_orbits).
+    Each orbit o -> (k = graphlet node count, motif_id = 2000 + o), disjoint from all
+    legacy encodings. backend="orca" (default, local, exact/deterministic) or
+    "hipermotif" (Wulver-only; identical schema, validated equal to ORCA by the gate).
     """
     import sys as _sys
     repo_root = Path(__file__).resolve().parents[2]
     if str(repo_root) not in _sys.path:
         _sys.path.insert(0, str(repo_root))
-    from src.datasets.orca_orbits import count_orbits, orbit_to_km
+    from src.datasets.orca_orbits import orbit_to_km
 
     edges = [(u, v) for u, v in g_nx.edges() if u != v]
-    mat = count_orbits(edges, num_nodes, graphlet_size=graphlet_size)
+    if backend == "hipermotif":
+        from src.datasets.hipermotif_backend import count_orbits_hipermotif
+        mat = count_orbits_hipermotif(edges, num_nodes, graphlet_size=graphlet_size)
+    else:
+        from src.datasets.orca_orbits import count_orbits
+        mat = count_orbits(edges, num_nodes, graphlet_size=graphlet_size)
     rows = []
     n_orbits = mat.shape[1]
     for u in range(num_nodes):
@@ -360,7 +366,7 @@ def _run_verify(out_path: Path):
 
 def _run_dataset(dataset: str, tool: str, root: Path, out_dir_override: Path | None,
                  force: bool, verify: bool, topk: int,
-                 features: str = "legacy", graphlet_size: int = 4):
+                 features: str = "legacy", graphlet_size: int = 4, backend: str = "orca"):
     out_dir = out_dir_override if out_dir_override else Path("data/precompute") / dataset
     out_path = out_dir / "node_motifs.csv"
 
@@ -369,11 +375,11 @@ def _run_dataset(dataset: str, tool: str, root: Path, out_dir_override: Path | N
         if orbit_path.exists() and not force:
             print(f"[SKIP] {orbit_path} already exists. Use --force to recompute.")
             return
-        print(f"[INFO] ORCA orbit features (graphlet_size={graphlet_size}) for {dataset} ...")
+        print(f"[INFO] {backend} orbit features (graphlet_size={graphlet_size}) for {dataset} ...")
         from tqdm import tqdm
         if dataset in PLANETOID_DATASETS:
             G_nx, num_nodes = _load_planetoid_as_nx(dataset, root)
-            rows = _count_orbits_single(G_nx, num_nodes, graphlet_size)
+            rows = _count_orbits_single(G_nx, num_nodes, graphlet_size, backend)
             _write_orbit_csv(rows, orbit_path, topk, multigraph=False)
         else:
             if dataset in TU_DATASETS:
@@ -385,7 +391,7 @@ def _run_dataset(dataset: str, tool: str, root: Path, out_dir_override: Path | N
                 sys.exit(1)
             all_rows = []
             for graph_id, g_nx, num_nodes in tqdm(graphs, desc=f"  {dataset} orbits", unit="graph"):
-                for node_id, k, motif_id, count in _count_orbits_single(g_nx, num_nodes, graphlet_size):
+                for node_id, k, motif_id, count in _count_orbits_single(g_nx, num_nodes, graphlet_size, backend):
                     all_rows.append((graph_id, node_id, k, motif_id, count))
             _write_orbit_csv(all_rows, orbit_path, topk, multigraph=True)
         if verify:
@@ -531,6 +537,14 @@ def main():
         choices=[4, 5],
         help="ORCA graphlet size for --features orbit (default 4; 5 is a smoke-test path).",
     )
+    parser.add_argument(
+        "--backend",
+        default="orca",
+        choices=["orca", "hipermotif"],
+        help="Orbit-counting engine for --features orbit: 'orca' (default, local oracle) "
+             "or 'hipermotif' (Wulver-only; arkouda+arachne; identical schema, validated "
+             "equal to ORCA by scripts/wulver/verify_hipermotif_equals_orca.py).",
+    )
     args = parser.parse_args()
 
     root = Path(args.root)
@@ -551,6 +565,7 @@ def main():
             topk=args.topk,
             features=args.features,
             graphlet_size=args.graphlet_size,
+            backend=args.backend,
         )
 
 
