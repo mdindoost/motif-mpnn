@@ -153,8 +153,10 @@ def normalize_embeddings(pattern: str, embeddings: np.ndarray, num_host_nodes: i
             for p in positions:
                 np.add.at(tally, emb[:, p], 1)
         if np.any(tally % naut != 0):
+            orca = _PATTERN_ORBIT_TO_ORCA[(pattern, oid)]
             raise ValueError(
-                f"pattern {pattern!r} orbit {oid}: collapsed tally not divisible by "
+                f"pattern {pattern!r} local orbit {oid} (ORCA orbit {orca}, "
+                f"positions {tuple(positions)}): collapsed tally not divisible by "
                 f"|Aut|={naut} — embedding set is malformed or not induced.")
         out[_PATTERN_ORBIT_TO_ORCA[(pattern, oid)]] = tally // naut
     return out

@@ -62,12 +62,16 @@ def _symmetrize(edges: Iterable[Tuple[int, int]], num_nodes: int) -> Tuple[List[
 def _build_propgraph(ak, ar, src: List[int], dst: List[int]):
     """Build a symmetrized Arachne PropGraph from src/dst host-vertex arrays.
 
-    NOTE (Wulver): this is the one cluster-API touchpoint most likely to need a minor
-    adjustment to your Arachne version's PropGraph loader. The subgraph_isomorphism
-    call and the normalization are the verified parts.
+    Uses the verified working Arachne API (confirmed on Wulver 2026-06-15):
+    PropGraph().load_edge_attributes(DataFrame{src,dst}, source_column, destination_column).
+    The earlier add_edges_from(...) form did not match the installed Arachne version.
+    The subgraph_isomorphism call and the normalization are the separately-verified parts.
     """
     g = ar.PropGraph()
-    g.add_edges_from(ak.array(src), ak.array(dst))
+    g.load_edge_attributes(
+        ak.DataFrame({"src": ak.array(src), "dst": ak.array(dst)}),
+        source_column="src", destination_column="dst",
+    )
     return g
 
 
