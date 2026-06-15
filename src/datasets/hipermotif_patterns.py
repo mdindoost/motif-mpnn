@@ -130,63 +130,131 @@ _PATTERN_ORBIT_TO_ORCA: Dict[Tuple[str, int], int] = {
 PATTERN_NAMES: List[str] = list(PATTERNS.keys())
 
 
-def normalize_embeddings(pattern: str, embeddings: np.ndarray, num_host_nodes: int) -> Dict[int, np.ndarray]:
+def normalize_embeddings(pattern: str, embeddings: np.ndarray, num_host_nodes: int,
+                         mapper: "np.ndarray | None" = None) -> Dict[int, np.ndarray]:
     """Convert induced isomorphism embeddings of `pattern` into ORCA-orbit per-vertex counts.
 
-    `embeddings` is an integer array of shape [num_embeddings, n_pattern_vertices]; column j
-    holds the host vertex mapped to pattern vertex j (HiPerMotif `return_isos_as="vertices"`
-    reshaped). Returns {orca_orbit_index: int64 per-vertex count array of length num_host_nodes}.
+    `embeddings` is an integer array of shape [num_embeddings, n_pattern_vertices].
+
+    COLUMN ORDER IS NOT THE ORIGINAL PATTERN-VERTEX ORDER. HiPerMotif
+    `return_isos_as="vertices"` returns two arrays: result[0] (the host-vertex embeddings,
+    reshaped into `embeddings`) and result[1] (`isoMapper` = the structurally-reordered
+    pattern-vertex order `nodeMapGraphG2`, repeated per embedding). Because
+    `reorder_type="structural"` permutes the pattern's vertices internally, output column j
+    holds the host vertex mapped to ORIGINAL pattern vertex `mapper[j]` — NOT pattern vertex j.
+    `mapper` must be the length-n_pattern permutation (one row of result[1]); pass None only
+    when column order is known to be identity (e.g. an already-canonical local mock).
+
+    Ignoring `mapper` silently mixes columns across automorphism orbits whenever the structural
+    reorder crosses orbits (e.g. p3 center vs ends, paw hub vs base) — which made the collapsed
+    tally not divisible by |Aut| on the cluster while the identity-ordered local mock passed.
 
     For each automorphism orbit of the pattern: collapse (sum) the per-vertex tallies over the
-    orbit's positions, then divide by |Aut(pattern)| (the corrected contract). Raises if the
-    collapsed tally is not divisible by |Aut| (a malformed / non-induced embedding set).
+    orbit's positions (mapped through `mapper` to the right output columns), then divide by
+    |Aut(pattern)| (the corrected contract). Raises if the collapsed tally is not divisible by
+    |Aut| (a malformed / non-induced embedding set, or a wrong/missing mapper).
     """
     emb = np.asarray(embeddings, dtype=np.int64)
+    n_pat = PATTERNS[pattern][1]
     naut, groups = automorphism_count_and_orbits(pattern)
-    if emb.ndim != 2 or (emb.size and emb.shape[1] != PATTERNS[pattern][1]):
+    if emb.ndim != 2 or (emb.size and emb.shape[1] != n_pat):
         raise ValueError(
-            f"embeddings shape {emb.shape} != [*, {PATTERNS[pattern][1]}] for pattern {pattern!r}")
+            f"embeddings shape {emb.shape} != [*, {n_pat}] for pattern {pattern!r}")
+    # mapper[j] = ORIGINAL pattern vertex held by output column j (None => identity)
+    if mapper is None:
+        mapper = np.arange(n_pat, dtype=np.int64)
+    else:
+        mapper = np.asarray(mapper, dtype=np.int64).ravel()
+    if mapper.shape != (n_pat,) or sorted(mapper.tolist()) != list(range(n_pat)):
+        raise ValueError(
+            f"mapper {mapper.tolist()} is not a permutation of 0..{n_pat - 1} "
+            f"for pattern {pattern!r}")
+    # inverse: original pattern vertex p -> the output column carrying it
+    col_of_vertex = np.empty(n_pat, dtype=np.int64)
+    col_of_vertex[mapper] = np.arange(n_pat, dtype=np.int64)
     out: Dict[int, np.ndarray] = {}
     for oid, positions in enumerate(groups):
         tally = np.zeros(num_host_nodes, dtype=np.int64)
         if emb.size:
-            for p in positions:
-                np.add.at(tally, emb[:, p], 1)
+            for p in positions:                       # p is an ORIGINAL pattern vertex
+                np.add.at(tally, emb[:, int(col_of_vertex[p])], 1)
         if np.any(tally % naut != 0):
             orca = _PATTERN_ORBIT_TO_ORCA[(pattern, oid)]
             raise ValueError(
                 f"pattern {pattern!r} local orbit {oid} (ORCA orbit {orca}, "
                 f"positions {tuple(positions)}): collapsed tally not divisible by "
-                f"|Aut|={naut} — embedding set is malformed or not induced.")
+                f"|Aut|={naut} — embedding set is malformed, not induced, or the "
+                f"column->pattern-vertex mapper is wrong.")
         out[_PATTERN_ORBIT_TO_ORCA[(pattern, oid)]] = tally // naut
     return out
 
 
-def orbit_matrix_from_embeddings(embeddings_by_pattern: Dict[str, np.ndarray],
+def orbit_matrix_from_embeddings(embeddings_by_pattern: "Dict[str, object]",
                                  num_host_nodes: int) -> np.ndarray:
-    """Assemble the full [num_host_nodes, 15] ORCA-orbit matrix from per-pattern embeddings."""
+    """Assemble the full [num_host_nodes, 15] ORCA-orbit matrix from per-pattern embeddings.
+
+    Each value in `embeddings_by_pattern` is either a `(embeddings, mapper)` pair (the real
+    HiPerMotif contract: result[0] and the column->pattern-vertex permutation from result[1])
+    or a bare `embeddings` array (treated as identity column order for back-compat).
+    """
     X = np.zeros((num_host_nodes, N_ORBITS_SIZE4), dtype=np.int64)
     for name in PATTERN_NAMES:
-        emb = embeddings_by_pattern.get(name)
-        if emb is None:
+        item = embeddings_by_pattern.get(name)
+        if item is None:
             continue
-        for orca, vec in normalize_embeddings(name, emb, num_host_nodes).items():
+        if isinstance(item, tuple):
+            emb, mapper = item
+        else:
+            emb, mapper = item, None  # identity column order
+        for orca, vec in normalize_embeddings(name, emb, num_host_nodes, mapper).items():
             X[:, orca] = vec
     return X
 
 
-def induced_embeddings(G: nx.Graph, pattern: str) -> np.ndarray:
+# Deterministic structural-reorder permutations for the LOCAL mock. mapper[j] = original
+# pattern vertex held by output column j. For multi-orbit patterns these are deliberately
+# NON-identity AND NOT automorphisms (they move a vertex into a column another orbit would
+# occupy), so the column->pattern-vertex remap is actually exercised by the unit tests — the
+# exact case the old identity-ordered mock missed while Wulver failed. Single-orbit / fully
+# symmetric patterns use identity (any permutation is an automorphism, so it is invariant).
+_MOCK_STRUCTURAL_PERM: Dict[str, Tuple[int, ...]] = {
+    "edge":     (0, 1),
+    "p3":       (1, 0, 2),        # center -> col 0 (crosses center/ends orbits)
+    "triangle": (0, 1, 2),
+    "p4":       (1, 0, 2, 3),     # inner vertex 1 -> col 0 (crosses inner/ends orbits)
+    "claw":     (1, 0, 2, 3),     # a leaf -> col 0 (crosses center/leaves orbits)
+    "paw":      (1, 0, 2, 3),     # hub -> col 0 (crosses hub/base orbits)
+    "c4":       (0, 1, 2, 3),
+    "diamond":  (1, 0, 2, 3),     # deg-3 -> col 0 (crosses deg-2/deg-3 orbits)
+    "k4":       (0, 1, 2, 3),
+}
+
+
+def mock_structural_perm(pattern: str) -> np.ndarray:
+    """The mapper (column->original-pattern-vertex permutation) the local mock simulates."""
+    return np.asarray(_MOCK_STRUCTURAL_PERM[pattern], dtype=np.int64)
+
+
+def induced_embeddings(G: nx.Graph, pattern: str) -> Tuple[np.ndarray, np.ndarray]:
     """LOCAL ORACLE / SIMULATION of HiPerMotif's induced subgraph_isomorphism output.
 
     Enumerates every induced copy of `pattern` in host graph G and every isomorphism of
-    that copy onto the pattern (i.e. |Aut| orderings per copy), returning embeddings of
-    shape [num_embeddings, n_pattern_vertices] with ORIGINAL host vertex IDs — exactly the
-    semantics the Wulver `ar.subgraph_isomorphism(..., return_isos_as="vertices",
-    algorithm_type="si", reorder_type="structural")` call produces. Pure networkx; used by
-    tests and the equivalence gate's local side. G must have integer node labels 0..N-1.
+    that copy onto the pattern (i.e. |Aut| orderings per copy), and returns
+    `(embeddings, mapper)` — exactly the two-array shape the Wulver
+    `ar.subgraph_isomorphism(..., return_isos_as="vertices", algorithm_type="si",
+    reorder_type="structural")` call produces:
+      * embeddings : [num_embeddings, n_pattern_vertices], ORIGINAL host vertex IDs, with
+                     columns ordered by the (simulated) structural reorder — output column j
+                     holds the host vertex mapped to original pattern vertex `mapper[j]`.
+      * mapper     : the length-n_pattern permutation (result[1]'s repeated `nodeMapGraphG2`).
+    The mock applies a fixed non-identity permutation for multi-orbit patterns (see
+    `_MOCK_STRUCTURAL_PERM`) so callers MUST honor `mapper` to recover correct orbit counts.
+    Pure networkx; used by tests and the equivalence gate's local side. G must have integer
+    node labels 0..N-1.
     """
     H = pattern_graph(pattern)
     n = H.number_of_nodes()
+    perm = mock_structural_perm(pattern)               # mapper[j] = original vertex at col j
     rows: List[List[int]] = []
     nodes = list(G.nodes())
     for combo in itertools.combinations(nodes, n):
@@ -196,6 +264,7 @@ def induced_embeddings(G: nx.Graph, pattern: str) -> np.ndarray:
         for phi in GraphMatcher(sub, H).isomorphisms_iter():  # host_vertex -> pattern_vertex
             inv = [None] * n
             for u, pv in phi.items():
-                inv[pv] = u
-            rows.append(inv)
-    return np.asarray(rows, dtype=np.int64).reshape(-1, n)
+                inv[pv] = u                            # inv[original pattern vertex] = host
+            rows.append([inv[int(perm[j])] for j in range(n)])  # col j carries vertex perm[j]
+    emb = np.asarray(rows, dtype=np.int64).reshape(-1, n)
+    return emb, perm

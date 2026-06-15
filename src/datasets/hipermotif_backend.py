@@ -12,10 +12,18 @@ VERIFIED CONVENTIONS (confirmed on Wulver — see CLAUDE.md "HiPerMotif backend"
   * Returns (induced copies) x |Aut(H)|; normalization divides collapsed per-vertex
     orbit tallies by the FULL |Aut(H)| (hipermotif_patterns.normalize_embeddings).
   * API: ar.subgraph_isomorphism(G, H, return_isos_as="vertices",
-    algorithm_type="si", reorder_type="structural"); reorder_type="structural" returns
-    host IDs in ORIGINAL numbering (no remap). result[0] is a FLAT array of length
-    num_embeddings * n_pattern_vertices; reshape to [num_embeddings, n_pattern_vertices],
-    column j = pattern vertex j.
+    algorithm_type="si", reorder_type="structural"). reorder_type="structural" returns host
+    IDs in ORIGINAL numbering (no HOST remap), but it PERMUTES the PATTERN's vertices
+    internally. The call returns TWO arrays:
+      result[0] = isoArr    : flat host-vertex embeddings, length num_embeddings * n_pattern;
+                              reshape to [num_embeddings, n_pattern].
+      result[1] = isoMapper : the reordered pattern-vertex order (`nodeMapGraphG2`) repeated
+                              once per embedding. Output column j holds the host vertex mapped
+                              to ORIGINAL pattern vertex isoMapper[j] — NOT pattern vertex j.
+    We extract the (global) permutation from result[1] and pass it as `mapper` to
+    hipermotif_patterns so orbit tallies use the correct column per pattern vertex. Ignoring
+    isoMapper mixes columns across orbits for multi-orbit patterns (p3, paw, ...) — the bug
+    that failed the gate on Cora/Shrikhande while the identity-ordered local mock passed.
 """
 from __future__ import annotations
 
@@ -75,15 +83,38 @@ def _build_propgraph(ak, ar, src: List[int], dst: List[int]):
     return g
 
 
-def _run_iso(ar, G, H) -> np.ndarray:
-    """Call HiPerMotif induced subgraph isomorphism and return embeddings as a numpy
-    array [num_embeddings, n_pattern_vertices] of ORIGINAL host vertex IDs."""
-    n_pat = H.n_vertices if hasattr(H, "n_vertices") else None  # not relied upon; see reshape
+def _run_iso(ar, G, H) -> Tuple[np.ndarray, np.ndarray]:
+    """Call HiPerMotif induced subgraph isomorphism and return BOTH arrays of the
+    `return_isos_as="vertices"` contract as flat numpy arrays:
+      result[0] = isoArr    : host-vertex embeddings, length n_pattern * num_embeddings.
+      result[1] = isoMapper : the structurally-reordered pattern-vertex order
+                  (`nodeMapGraphG2`) repeated once per embedding, same length.
+    The caller reshapes both to [num_embeddings, n_pattern] and uses isoMapper to map output
+    columns back to ORIGINAL pattern vertices (reorder_type="structural" permutes them)."""
     result = ar.subgraph_isomorphism(
         G, H, return_isos_as="vertices", algorithm_type="si", reorder_type="structural",
     )
-    flat = result[0].to_ndarray()  # arkouda pdarray -> numpy
-    return flat  # reshaped by the caller using the known pattern vertex count
+    iso = np.asarray(result[0].to_ndarray(), dtype=np.int64).ravel()
+    mapper = np.asarray(result[1].to_ndarray(), dtype=np.int64).ravel()
+    return iso, mapper
+
+
+def _extract_mapper(mapper_flat: np.ndarray, n_pat: int, num_emb: int) -> np.ndarray:
+    """isoMapper is `nodeMapGraphG2` repeated once per embedding (the runSearch `forall ...
+    by numSubgraphVertices` assignment), so the permutation is GLOBAL — identical for every
+    embedding. Return the length-n_pat permutation and assert that invariant; if it ever
+    differs per embedding the engine convention changed and per-embedding remap is required."""
+    if num_emb == 0:
+        return np.arange(n_pat, dtype=np.int64)  # no embeddings -> mapper irrelevant
+    if mapper_flat.size != n_pat * num_emb:
+        raise ValueError(
+            f"isoMapper length {mapper_flat.size} != n_pat*num_emb={n_pat * num_emb}")
+    M = mapper_flat.reshape(num_emb, n_pat)
+    if not np.all(M == M[0]):
+        raise ValueError(
+            "isoMapper differs across embeddings — the structural reorder is no longer global; "
+            "per-embedding column->pattern-vertex remap is required.")
+    return M[0].astype(np.int64)
 
 
 def count_orbits_hipermotif(edges: Iterable[Tuple[int, int]], num_nodes: int,
@@ -102,13 +133,14 @@ def count_orbits_hipermotif(edges: Iterable[Tuple[int, int]], num_nodes: int,
         return np.zeros((num_nodes, hp.N_ORBITS_SIZE4), dtype=np.int64)
     G = _build_propgraph(ak, ar, src, dst)
 
-    embeddings_by_pattern: Dict[str, np.ndarray] = {}
+    embeddings_by_pattern: Dict[str, Tuple[np.ndarray, np.ndarray]] = {}
     for name in hp.PATTERN_NAMES:
         n_pat = hp.PATTERNS[name][1]
         psrc, pdst = _symmetrize(hp.PATTERNS[name][0], n_pat)
         H = _build_propgraph(ak, ar, psrc, pdst)
-        flat = _run_iso(ar, G, H)
-        emb = np.asarray(flat, dtype=np.int64).reshape(-1, n_pat)  # [num_emb, n_pat]
-        embeddings_by_pattern[name] = emb
+        iso_flat, mapper_flat = _run_iso(ar, G, H)
+        emb = iso_flat.reshape(-1, n_pat)                       # [num_emb, n_pat]
+        mapper = _extract_mapper(mapper_flat, n_pat, emb.shape[0])
+        embeddings_by_pattern[name] = (emb, mapper)             # mapper[j] -> orig vertex
 
     return hp.orbit_matrix_from_embeddings(embeddings_by_pattern, num_nodes)

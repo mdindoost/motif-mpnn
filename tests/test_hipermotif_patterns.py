@@ -49,19 +49,19 @@ def test_mocked_normalization_k4_anchors():
     4-clique=1 per vertex."""
     K4 = nx.complete_graph(4)
 
-    edge_emb = hp.induced_embeddings(K4, "edge")        # 6 edges x 2 orderings = 12
+    edge_emb, edge_map = hp.induced_embeddings(K4, "edge")   # 6 edges x 2 orderings = 12
     assert edge_emb.shape == (12, 2)
-    deg = hp.normalize_embeddings("edge", edge_emb, 4)
+    deg = hp.normalize_embeddings("edge", edge_emb, 4, edge_map)
     assert np.array_equal(deg[DEGREE_ORBIT], np.full(4, 3))
 
-    tri_emb = hp.induced_embeddings(K4, "triangle")     # 4 triangles x 6 = 24
+    tri_emb, tri_map = hp.induced_embeddings(K4, "triangle")  # 4 triangles x 6 = 24
     assert tri_emb.shape == (24, 3)
-    tri = hp.normalize_embeddings("triangle", tri_emb, 4)
+    tri = hp.normalize_embeddings("triangle", tri_emb, 4, tri_map)
     assert np.array_equal(tri[TRIANGLE_ORBIT], np.full(4, 3))
 
-    k4_emb = hp.induced_embeddings(K4, "k4")            # 1 clique x 24 = 24
+    k4_emb, k4_map = hp.induced_embeddings(K4, "k4")          # 1 clique x 24 = 24
     assert k4_emb.shape == (24, 4)
-    clq = hp.normalize_embeddings("k4", k4_emb, 4)
+    clq = hp.normalize_embeddings("k4", k4_emb, 4, k4_map)
     assert np.array_equal(clq[CLIQUE4_ORBIT], np.full(4, 1))
 
 
@@ -81,6 +81,41 @@ def test_all_15_orbits_equal_orca(gname, G):
     O = orca_count([(int(u), int(v)) for u, v in G.edges()], N)
     assert X.shape == O.shape == (N, 15)
     assert np.array_equal(X, O), f"{gname}: mismatch at {np.argwhere(X != O)[:5].tolist()}"
+
+
+# --- the regression test that would have caught the Wulver gate failure ------
+@pytest.mark.parametrize("pattern", ["p3", "paw", "p4", "claw", "diamond"])
+def test_remap_required_for_multiorbit_patterns(pattern):
+    """reorder_type="structural" permutes the pattern's vertices, so output column j holds
+    original pattern vertex mapper[j], NOT j. For multi-orbit patterns this crosses orbits;
+    ignoring the mapper mixes orbit tallies (the bug that failed the gate on Cora/Shrikhande
+    while the old identity-ordered mock passed). This asserts: (a) the mock perm is genuinely
+    non-identity so the remap is exercised; (b) WITH the mapper the counts match ORCA; (c)
+    WITHOUT the mapper the result is detectably wrong (raises on |Aut| divisibility, or differs
+    from ORCA) — i.e. the bug cannot pass silently."""
+    perm = hp.mock_structural_perm(pattern)
+    assert not np.array_equal(perm, np.arange(len(perm))), \
+        f"{pattern} mock perm is identity — the test would not exercise the remap"
+
+    G = nx.convert_node_labels_to_integers(nx.gnp_random_graph(10, 0.45, seed=3))
+    N = G.number_of_nodes()
+    emb, mapper = hp.induced_embeddings(G, pattern)
+    assert emb.size > 0, f"test host has no induced {pattern}; pick a different graph"
+    O = orca_count([(int(u), int(v)) for u, v in G.edges()], N)
+
+    # (b) WITH the mapper: every orbit of this pattern matches the ORCA oracle.
+    got = hp.normalize_embeddings(pattern, emb, N, mapper)
+    for orca_id, vec in got.items():
+        assert np.array_equal(vec, O[:, orca_id]), \
+            f"{pattern} ORCA orbit {orca_id} mismatches with mapper applied"
+
+    # (c) WITHOUT the mapper (the bug): must NOT silently match ORCA.
+    try:
+        bad = hp.normalize_embeddings(pattern, emb, N)  # identity column assumption
+    except ValueError:
+        return  # divisibility guard fired — the bug is detected, as intended
+    assert any(not np.array_equal(bad[o], O[:, o]) for o in bad), \
+        f"{pattern}: ignoring the mapper still matched ORCA — remap not actually exercised"
 
 
 # --- import-guard ------------------------------------------------------------
