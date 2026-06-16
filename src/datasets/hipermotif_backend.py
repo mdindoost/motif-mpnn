@@ -83,27 +83,40 @@ def _build_propgraph(ak, ar, src: List[int], dst: List[int]):
     return g
 
 
-def _run_iso(ar, G, H) -> Tuple[np.ndarray, np.ndarray]:
+# CORRECTNESS path for feature extraction. With reorder_type="None" the Chapel server
+# (SubgraphSearch.chpl line ~1060 branches on reorderType != "None") does NO pattern-vertex
+# reordering, so embeddings come back in our ORIGINAL pattern-vertex order — output column j
+# == pattern vertex j, and isoMapper is the identity. This was confirmed on Wulver (C5 wedge
+# embeddings put the center in the MIDDLE column; Cora induced wedges match ORCA). We KEEP
+# reading isoMapper and ASSERT it is identity here, as a guard against a future change
+# silently reintroducing reordering. NOTE: reorder_type="None" may be SLOWER (reordering
+# optimizes the search); the scaling/timing experiments are a different need — see CLAUDE.md
+# section 13. Pass reorder_type="structural" there, where the non-identity mapper IS applied.
+DEFAULT_REORDER_TYPE = "None"
+
+
+def _run_iso(ar, G, H, reorder_type: str = DEFAULT_REORDER_TYPE) -> Tuple[np.ndarray, np.ndarray]:
     """Call HiPerMotif induced subgraph isomorphism and return BOTH arrays of the
     `return_isos_as="vertices"` contract as flat numpy arrays:
       result[0] = isoArr    : host-vertex embeddings, length n_pattern * num_embeddings.
-      result[1] = isoMapper : the structurally-reordered pattern-vertex order
-                  (`nodeMapGraphG2`) repeated once per embedding, same length.
-    The caller reshapes both to [num_embeddings, n_pattern] and uses isoMapper to map output
-    columns back to ORIGINAL pattern vertices (reorder_type="structural" permutes them)."""
+      result[1] = isoMapper : the pattern-vertex order (`nodeMapGraphG2`) repeated once per
+                  embedding. With reorder_type="None" this is the identity; with "structural"
+                  it is a (global) permutation the caller must invert to recover orbits."""
     result = ar.subgraph_isomorphism(
-        G, H, return_isos_as="vertices", algorithm_type="si", reorder_type="structural",
+        G, H, return_isos_as="vertices", algorithm_type="si", reorder_type=reorder_type,
     )
     iso = np.asarray(result[0].to_ndarray(), dtype=np.int64).ravel()
     mapper = np.asarray(result[1].to_ndarray(), dtype=np.int64).ravel()
     return iso, mapper
 
 
-def _extract_mapper(mapper_flat: np.ndarray, n_pat: int, num_emb: int) -> np.ndarray:
+def _extract_mapper(mapper_flat: np.ndarray, n_pat: int, num_emb: int,
+                    require_identity: bool = False) -> np.ndarray:
     """isoMapper is `nodeMapGraphG2` repeated once per embedding (the runSearch `forall ...
     by numSubgraphVertices` assignment), so the permutation is GLOBAL — identical for every
-    embedding. Return the length-n_pat permutation and assert that invariant; if it ever
-    differs per embedding the engine convention changed and per-embedding remap is required."""
+    embedding. Return the length-n_pat permutation and assert that invariant. When
+    `require_identity` (the reorder_type="None" production path) also assert it is the
+    identity 0..n_pat-1 — a cheap guard that fires if reordering is ever reintroduced."""
     if num_emb == 0:
         return np.arange(n_pat, dtype=np.int64)  # no embeddings -> mapper irrelevant
     if mapper_flat.size != n_pat * num_emb:
@@ -112,35 +125,52 @@ def _extract_mapper(mapper_flat: np.ndarray, n_pat: int, num_emb: int) -> np.nda
     M = mapper_flat.reshape(num_emb, n_pat)
     if not np.all(M == M[0]):
         raise ValueError(
-            "isoMapper differs across embeddings — the structural reorder is no longer global; "
+            "isoMapper differs across embeddings — the reorder is no longer global; "
             "per-embedding column->pattern-vertex remap is required.")
-    return M[0].astype(np.int64)
+    perm = M[0].astype(np.int64)
+    if require_identity and not np.array_equal(perm, np.arange(n_pat)):
+        raise ValueError(
+            f"reorder_type='None' but isoMapper={perm.tolist()} is not the identity — the "
+            f"engine reordered pattern vertices unexpectedly; column->vertex order is not "
+            f"trustworthy. Investigate before using these counts.")
+    return perm
 
 
 def count_orbits_hipermotif(edges: Iterable[Tuple[int, int]], num_nodes: int,
-                            graphlet_size: int = 4) -> np.ndarray:
+                            graphlet_size: int = 4,
+                            reorder_type: str = DEFAULT_REORDER_TYPE) -> np.ndarray:
     """Per-vertex ORCA-orbit counts [num_nodes, 15] computed with HiPerMotif (Wulver).
 
     Drop-in equivalent of orca_orbits.count_orbits: same shape, same orbit indexing,
     same integer counts. Requires arkouda + arachne (raises a clear error otherwise).
+
+    reorder_type="None" (default) is the correctness path: no pattern-vertex permutation,
+    column j == pattern vertex j. "structural" is faster but permutes columns; the mapper
+    from result[1] is then inverted in normalize_embeddings (used for timing experiments).
     """
     if graphlet_size != 4:
         raise NotImplementedError("HiPerMotif backend currently supports size-4 orbits (15).")
     ak, ar = _require_arachne()
 
-    src, dst = _symmetrize(edges, num_nodes)
+    edge_list = [(int(u), int(v)) for u, v in edges]
+    src, dst = _symmetrize(edge_list, num_nodes)
     if not src:  # 0-edge graph -> all-zero orbit matrix (matches ORCA short-circuit)
         return np.zeros((num_nodes, hp.N_ORBITS_SIZE4), dtype=np.int64)
     G = _build_propgraph(ak, ar, src, dst)
+    require_identity = (reorder_type == "None")
 
     embeddings_by_pattern: Dict[str, Tuple[np.ndarray, np.ndarray]] = {}
     for name in hp.PATTERN_NAMES:
         n_pat = hp.PATTERNS[name][1]
         psrc, pdst = _symmetrize(hp.PATTERNS[name][0], n_pat)
         H = _build_propgraph(ak, ar, psrc, pdst)
-        iso_flat, mapper_flat = _run_iso(ar, G, H)
+        iso_flat, mapper_flat = _run_iso(ar, G, H, reorder_type)
         emb = iso_flat.reshape(-1, n_pat)                       # [num_emb, n_pat]
-        mapper = _extract_mapper(mapper_flat, n_pat, emb.shape[0])
+        mapper = _extract_mapper(mapper_flat, n_pat, emb.shape[0], require_identity)
+        # Regression guard: confirm the engine actually returned INDUCED matches (every
+        # pattern non-edge maps to a host non-edge). Loud on violation; catches a whole class
+        # of monomorphism/adjacency bugs at the source.
+        hp.assert_induced_embeddings(name, emb, edge_list, num_nodes, mapper)
         embeddings_by_pattern[name] = (emb, mapper)             # mapper[j] -> orig vertex
 
     return hp.orbit_matrix_from_embeddings(embeddings_by_pattern, num_nodes)

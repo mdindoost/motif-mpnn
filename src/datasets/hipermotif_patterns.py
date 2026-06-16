@@ -28,7 +28,7 @@ from __future__ import annotations
 
 import itertools
 from dataclasses import dataclass
-from typing import Dict, List, Tuple
+from typing import Dict, Iterable, List, Tuple
 
 import numpy as np
 import networkx as nx
@@ -235,26 +235,29 @@ def mock_structural_perm(pattern: str) -> np.ndarray:
     return np.asarray(_MOCK_STRUCTURAL_PERM[pattern], dtype=np.int64)
 
 
-def induced_embeddings(G: nx.Graph, pattern: str) -> Tuple[np.ndarray, np.ndarray]:
+def induced_embeddings(G: nx.Graph, pattern: str,
+                       reorder: bool = False) -> Tuple[np.ndarray, np.ndarray]:
     """LOCAL ORACLE / SIMULATION of HiPerMotif's induced subgraph_isomorphism output.
 
     Enumerates every induced copy of `pattern` in host graph G and every isomorphism of
     that copy onto the pattern (i.e. |Aut| orderings per copy), and returns
-    `(embeddings, mapper)` — exactly the two-array shape the Wulver
-    `ar.subgraph_isomorphism(..., return_isos_as="vertices", algorithm_type="si",
-    reorder_type="structural")` call produces:
-      * embeddings : [num_embeddings, n_pattern_vertices], ORIGINAL host vertex IDs, with
-                     columns ordered by the (simulated) structural reorder — output column j
-                     holds the host vertex mapped to original pattern vertex `mapper[j]`.
+    `(embeddings, mapper)` — the two-array shape the Wulver `ar.subgraph_isomorphism(...,
+    return_isos_as="vertices")` call produces (result[0], result[1]):
+      * embeddings : [num_embeddings, n_pattern_vertices], ORIGINAL host vertex IDs; output
+                     column j holds the host vertex mapped to original pattern vertex
+                     `mapper[j]`.
       * mapper     : the length-n_pattern permutation (result[1]'s repeated `nodeMapGraphG2`).
-    The mock applies a fixed non-identity permutation for multi-orbit patterns (see
-    `_MOCK_STRUCTURAL_PERM`) so callers MUST honor `mapper` to recover correct orbit counts.
-    Pure networkx; used by tests and the equivalence gate's local side. G must have integer
-    node labels 0..N-1.
+
+    `reorder=False` (default) simulates the PRODUCTION path reorder_type="None": identity
+    column order (mapper = identity), column j == pattern vertex j. `reorder=True` simulates
+    reorder_type="structural" by applying a fixed non-identity, non-automorphism permutation
+    for multi-orbit patterns (`_MOCK_STRUCTURAL_PERM`), so callers MUST honor `mapper` to
+    recover correct orbit counts — this exists to keep the defensive mapper-inversion path
+    under test. Pure networkx; G must have integer node labels 0..N-1.
     """
     H = pattern_graph(pattern)
     n = H.number_of_nodes()
-    perm = mock_structural_perm(pattern)               # mapper[j] = original vertex at col j
+    perm = mock_structural_perm(pattern) if reorder else np.arange(n, dtype=np.int64)
     rows: List[List[int]] = []
     nodes = list(G.nodes())
     for combo in itertools.combinations(nodes, n):
@@ -268,3 +271,52 @@ def induced_embeddings(G: nx.Graph, pattern: str) -> Tuple[np.ndarray, np.ndarra
             rows.append([inv[int(perm[j])] for j in range(n)])  # col j carries vertex perm[j]
     emb = np.asarray(rows, dtype=np.int64).reshape(-1, n)
     return emb, perm
+
+
+def assert_induced_embeddings(pattern: str, embeddings: np.ndarray,
+                              host_edges: "Iterable[Tuple[int, int]]", num_host_nodes: int,
+                              mapper: "np.ndarray | None" = None,
+                              max_check: int = 200000) -> None:
+    """Regression guard: assert the returned embeddings are INDUCED — every pattern NON-edge
+    maps to a host NON-edge. Catches the whole class of monomorphism / adjacency-convention
+    bugs at the source (a non-induced p4 would map an "open" pair onto an adjacent host pair).
+
+    `host_edges` is the undirected host edge list; `mapper[j]` is the original pattern vertex
+    held by embedding column j (None => identity). Checks up to `max_check` embeddings (a
+    sample is sufficient as a guard). Raises ValueError loudly, with a concrete witness, on the
+    first violating pattern non-edge. No-op for complete patterns (triangle/k4: no non-edges).
+    """
+    emb = np.asarray(embeddings, dtype=np.int64)
+    n_pat = PATTERNS[pattern][1]
+    if emb.size == 0:
+        return
+    H = pattern_graph(pattern)
+    nonedges = [(a, b) for a, b in itertools.combinations(range(n_pat), 2) if not H.has_edge(a, b)]
+    if not nonedges:
+        return  # complete pattern: nothing to check
+    if mapper is None:
+        mapper = np.arange(n_pat, dtype=np.int64)
+    else:
+        mapper = np.asarray(mapper, dtype=np.int64).ravel()
+    col_of_vertex = np.empty(n_pat, dtype=np.int64)
+    col_of_vertex[mapper] = np.arange(n_pat, dtype=np.int64)
+    # encode undirected host edges as sorted (lo*N+hi) codes for vectorized membership
+    N = num_host_nodes
+    he = np.asarray([(int(u), int(v)) for u, v in host_edges], dtype=np.int64)
+    if he.size:
+        lo_e = np.minimum(he[:, 0], he[:, 1]); hi_e = np.maximum(he[:, 0], he[:, 1])
+        edge_codes = lo_e * N + hi_e
+    else:
+        edge_codes = np.empty(0, dtype=np.int64)
+    sub = emb[:max_check]
+    for a, b in nonedges:                       # a, b are ORIGINAL pattern vertices
+        ua = sub[:, int(col_of_vertex[a])]; ub = sub[:, int(col_of_vertex[b])]
+        lo = np.minimum(ua, ub); hi = np.maximum(ua, ub)
+        codes = lo * N + hi
+        hits = np.isin(codes, edge_codes)
+        if hits.any():
+            r = int(np.argmax(hits))
+            raise ValueError(
+                f"pattern {pattern!r} is NOT induced: non-edge ({a},{b}) maps to host pair "
+                f"({int(ua[r])},{int(ub[r])}) which IS a host edge (embedding row {r}). "
+                f"The engine returned a non-induced (monomorphism) match.")

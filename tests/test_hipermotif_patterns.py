@@ -83,24 +83,28 @@ def test_all_15_orbits_equal_orca(gname, G):
     assert np.array_equal(X, O), f"{gname}: mismatch at {np.argwhere(X != O)[:5].tolist()}"
 
 
-# --- the regression test that would have caught the Wulver gate failure ------
+# --- DEFENSIVE path: reorder_type="structural" mapper inversion --------------
+# Production extraction uses reorder_type="None" (identity columns; covered by the all-15 and
+# K4-anchor tests above, which call induced_embeddings with reorder=False). The mapper-
+# inversion code still exists for the faster "structural" path used in timing experiments, so
+# we keep it under test here with reorder=True (non-identity columns).
 @pytest.mark.parametrize("pattern", ["p3", "paw", "p4", "claw", "diamond"])
 def test_remap_required_for_multiorbit_patterns(pattern):
-    """reorder_type="structural" permutes the pattern's vertices, so output column j holds
-    original pattern vertex mapper[j], NOT j. For multi-orbit patterns this crosses orbits;
-    ignoring the mapper mixes orbit tallies (the bug that failed the gate on Cora/Shrikhande
-    while the old identity-ordered mock passed). This asserts: (a) the mock perm is genuinely
-    non-identity so the remap is exercised; (b) WITH the mapper the counts match ORCA; (c)
-    WITHOUT the mapper the result is detectably wrong (raises on |Aut| divisibility, or differs
-    from ORCA) — i.e. the bug cannot pass silently."""
+    """With reorder_type="structural" the engine permutes the pattern's vertices, so output
+    column j holds original pattern vertex mapper[j], NOT j. For multi-orbit patterns this
+    crosses orbits; ignoring the mapper mixes orbit tallies (the bug that failed the gate).
+    Asserts: (a) the mock perm is genuinely non-identity so the remap is exercised; (b) WITH
+    the mapper the counts match ORCA; (c) WITHOUT the mapper the result is detectably wrong
+    (raises on |Aut| divisibility, or differs from ORCA) — i.e. the bug cannot pass silently."""
     perm = hp.mock_structural_perm(pattern)
     assert not np.array_equal(perm, np.arange(len(perm))), \
         f"{pattern} mock perm is identity — the test would not exercise the remap"
 
     G = nx.convert_node_labels_to_integers(nx.gnp_random_graph(10, 0.45, seed=3))
     N = G.number_of_nodes()
-    emb, mapper = hp.induced_embeddings(G, pattern)
+    emb, mapper = hp.induced_embeddings(G, pattern, reorder=True)   # simulate "structural"
     assert emb.size > 0, f"test host has no induced {pattern}; pick a different graph"
+    assert not np.array_equal(mapper, np.arange(len(perm)))         # mapper is non-identity
     O = orca_count([(int(u), int(v)) for u, v in G.edges()], N)
 
     # (b) WITH the mapper: every orbit of this pattern matches the ORCA oracle.
@@ -116,6 +120,30 @@ def test_remap_required_for_multiorbit_patterns(pattern):
         return  # divisibility guard fired — the bug is detected, as intended
     assert any(not np.array_equal(bad[o], O[:, o]) for o in bad), \
         f"{pattern}: ignoring the mapper still matched ORCA — remap not actually exercised"
+
+
+# --- induced-ness regression guard (catches monomorphism / adjacency bugs) ----
+@pytest.mark.parametrize("pattern", ["p3", "p4", "claw", "paw", "c4", "diamond"])
+def test_assert_induced_passes_on_genuine_induced_embeddings(pattern):
+    """The mock returns only genuine induced copies, so the guard must accept them — on both
+    the production (identity) and defensive (reordered) column orders."""
+    G = nx.convert_node_labels_to_integers(nx.gnp_random_graph(11, 0.4, seed=5))
+    N = G.number_of_nodes()
+    edges = [(int(u), int(v)) for u, v in G.edges()]
+    for reorder in (False, True):
+        emb, mapper = hp.induced_embeddings(G, pattern, reorder=reorder)
+        hp.assert_induced_embeddings(pattern, emb, edges, N, mapper)  # must not raise
+
+
+def test_assert_induced_fires_on_non_induced_embedding():
+    """A hand-built NON-induced 'p4' on C4 (pattern non-edge (0,3) lands on the C4 edge 0-3)
+    must be rejected loudly — the check that would have caught the whole bug class."""
+    C4 = nx.cycle_graph(4)                       # edges 0-1,1-2,2-3,3-0
+    edges = [(int(u), int(v)) for u, v in C4.edges()]
+    # claim p4 maps to host path 0-1-2-3; but in C4, pattern non-edge (0,3) is a real edge
+    bad_emb = np.array([[0, 1, 2, 3]], dtype=np.int64)
+    with pytest.raises(ValueError, match="NOT induced"):
+        hp.assert_induced_embeddings("p4", bad_emb, edges, 4)
 
 
 # --- import-guard ------------------------------------------------------------
