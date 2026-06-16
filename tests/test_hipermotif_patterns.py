@@ -135,6 +135,25 @@ def test_assert_induced_passes_on_genuine_induced_embeddings(pattern):
         hp.assert_induced_embeddings(pattern, emb, edges, N, mapper)  # must not raise
 
 
+def test_assert_induced_is_column_order_independent():
+    """Regression for the Cora/PROTEINS wedge false-alarm: a genuine induced embedding must
+    PASS the guard under ANY column permutation and even a deliberately wrong mapper — the
+    fixed check uses only the host-vertex SET, never the column->pattern-vertex order. The old
+    column-coupled guard fired here whenever the assumed order put the center where it expected
+    an endpoint."""
+    G = nx.convert_node_labels_to_integers(nx.gnp_random_graph(11, 0.4, seed=5))
+    N = G.number_of_nodes()
+    edges = [(int(u), int(v)) for u, v in G.edges()]
+    emb, _ = hp.induced_embeddings(G, "p3")          # genuine induced wedges (identity columns)
+    assert emb.size > 0
+    rng = np.random.default_rng(0)
+    for _ in range(5):
+        perm = rng.permutation(emb.shape[1])         # scramble columns arbitrarily
+        scrambled = emb[:, perm]
+        # a bogus non-identity mapper must be ignored (vertex set is unchanged -> still induced)
+        hp.assert_induced_embeddings("p3", scrambled, edges, N, mapper=np.array([1, 0, 2]))
+
+
 def test_assert_induced_fires_on_non_induced_embedding():
     """A hand-built NON-induced 'p4' on C4 (pattern non-edge (0,3) lands on the C4 edge 0-3)
     must be rejected loudly — the check that would have caught the whole bug class."""

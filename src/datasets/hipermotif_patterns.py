@@ -277,30 +277,35 @@ def assert_induced_embeddings(pattern: str, embeddings: np.ndarray,
                               host_edges: "Iterable[Tuple[int, int]]", num_host_nodes: int,
                               mapper: "np.ndarray | None" = None,
                               max_check: int = 200000) -> None:
-    """Regression guard: assert the returned embeddings are INDUCED — every pattern NON-edge
-    maps to a host NON-edge. Catches the whole class of monomorphism / adjacency-convention
-    bugs at the source (a non-induced p4 would map an "open" pair onto an adjacent host pair).
+    """Regression guard: assert every returned embedding is an INDUCED copy of `pattern` — the
+    induced subgraph on the embedding's host vertices has EXACTLY |E(pattern)| host edges
+    (equivalently, every pattern NON-edge maps to a host non-edge). Catches the monomorphism /
+    adjacency-convention failure class at the source: a non-induced match has MORE host edges
+    among its vertices than the pattern does.
 
-    `host_edges` is the undirected host edge list; `mapper[j]` is the original pattern vertex
-    held by embedding column j (None => identity). Checks up to `max_check` embeddings (a
-    sample is sufficient as a guard). Raises ValueError loudly, with a concrete witness, on the
-    first violating pattern non-edge. No-op for complete patterns (triangle/k4: no non-edges).
+    COLUMN-ORDER-INDEPENDENT (fix, 2026-06-16). The check uses only the SET of host vertices in
+    each row, so it makes NO assumption about how embedding columns map to pattern vertices. The
+    previous version checked specific pattern-non-edge COLUMN pairs through `mapper`; whenever
+    the assumed column order diverged from the engine's actual one it compared an adjacent
+    center–endpoint pair instead of the endpoint–endpoint non-edge and false-alarmed UNIVERSALLY
+    even though the orbit counts were exact (the p3/wedge gate-vs-guard contradiction on
+    Cora/PROTEINS). A set-based edge count cannot false-alarm when the counts are correct, yet
+    still fires on a genuinely non-induced match. `mapper` is accepted for API compatibility but
+    is no longer used.
+
+    `host_edges` is the undirected host edge list. Checks up to `max_check` embeddings (a sample
+    suffices as a guard). No-op for complete patterns (triangle/k4: every pair is an edge).
+    Raises ValueError loudly with a concrete witness row.
     """
     emb = np.asarray(embeddings, dtype=np.int64)
     n_pat = PATTERNS[pattern][1]
     if emb.size == 0:
         return
     H = pattern_graph(pattern)
-    nonedges = [(a, b) for a, b in itertools.combinations(range(n_pat), 2) if not H.has_edge(a, b)]
-    if not nonedges:
-        return  # complete pattern: nothing to check
-    if mapper is None:
-        mapper = np.arange(n_pat, dtype=np.int64)
-    else:
-        mapper = np.asarray(mapper, dtype=np.int64).ravel()
-    col_of_vertex = np.empty(n_pat, dtype=np.int64)
-    col_of_vertex[mapper] = np.arange(n_pat, dtype=np.int64)
-    # encode undirected host edges as sorted (lo*N+hi) codes for vectorized membership
+    n_pat_edges = H.number_of_edges()
+    if n_pat_edges == n_pat * (n_pat - 1) // 2:
+        return  # complete pattern: every pair is already an edge -> nothing to check
+    # encode undirected host edges as sorted lo*N+hi codes for vectorized membership
     N = num_host_nodes
     he = np.asarray([(int(u), int(v)) for u, v in host_edges], dtype=np.int64)
     if he.size:
@@ -309,14 +314,24 @@ def assert_induced_embeddings(pattern: str, embeddings: np.ndarray,
     else:
         edge_codes = np.empty(0, dtype=np.int64)
     sub = emb[:max_check]
-    for a, b in nonedges:                       # a, b are ORIGINAL pattern vertices
-        ua = sub[:, int(col_of_vertex[a])]; ub = sub[:, int(col_of_vertex[b])]
-        lo = np.minimum(ua, ub); hi = np.maximum(ua, ub)
-        codes = lo * N + hi
-        hits = np.isin(codes, edge_codes)
-        if hits.any():
-            r = int(np.argmax(hits))
-            raise ValueError(
-                f"pattern {pattern!r} is NOT induced: non-edge ({a},{b}) maps to host pair "
-                f"({int(ua[r])},{int(ub[r])}) which IS a host edge (embedding row {r}). "
-                f"The engine returned a non-induced (monomorphism) match.")
+    # Count host edges among each row's vertex SET (sum over ALL column pairs) and verify the
+    # n vertices are distinct -- both are invariant to which column holds which pattern vertex.
+    edge_count = np.zeros(sub.shape[0], dtype=np.int64)
+    distinct = np.ones(sub.shape[0], dtype=bool)
+    for i, j in itertools.combinations(range(n_pat), 2):
+        ui = sub[:, i]; uj = sub[:, j]
+        distinct &= (ui != uj)
+        lo = np.minimum(ui, uj); hi = np.maximum(ui, uj)
+        edge_count += np.isin(lo * N + hi, edge_codes)
+    if not distinct.all():
+        r = int(np.argmin(distinct))
+        raise ValueError(
+            f"pattern {pattern!r} embedding row {r}={sub[r].tolist()} has repeated host "
+            f"vertices — not a valid injective embedding.")
+    bad = edge_count != n_pat_edges
+    if bad.any():
+        r = int(np.argmax(bad))
+        raise ValueError(
+            f"pattern {pattern!r} is NOT induced: embedding row {r}={sub[r].tolist()} induces "
+            f"{int(edge_count[r])} host edge(s) but the pattern has {n_pat_edges} — the engine "
+            f"returned a non-induced (monomorphism) match.")
