@@ -21,50 +21,59 @@ re-verify on the big graphs.
 - conda env with arkouda + arachne + torch_geometric + networkx + (optional) `ogb`; `g++` for ORCA.
 - Whole node, exclusive, all memory (`--exclusive --mem=0`) — shared-memory scaling needs all cores+RAM.
 
-## 1. Stage the graphs (NO internet on compute nodes)
-Loading is excluded from timing, but the data must be on disk first:
-- **cora** — already in `data/processed/` (validation point).
-- **ogbn-arxiv / ogbn-products** — pre-download with `ogb` on a login node into
-  `data/processed/ogb/` (the loader reads from there; it will NOT download on a compute node).
-- **SNAP sparse hosts** (recommended for the headline: a road network / web graph) — download the
-  edge-list (`.txt`, `u v` per line, `#` comments ok) to `/scratch/$USER/` and pass via
-  `--edge-file`. (Dense social graphs Orkut/Friendster are NEXT-PRIORITY stress, not the spine.)
+## RUNBOOK — do these in order. The ONLY environment-specific action is starting your
+## arkouda server (your usual `arkouda_server` launch). Everything else is exact commands.
+Set once: `export REPO=$HOME/motif-mpnn; export PYTHONPATH=$REPO; cd $REPO; export GR=/scratch/$USER/hm_graphs`
 
-## 2. Fill the three TODO blocks in `run_scale_experiments.sh`
-The script is ready except for cluster-specific bits (marked `TODO-1/2/3`):
-- **TODO-1**: SLURM header (or delete if interactive).
-- **TODO-2**: `start_server <threads>` / `stop_server` — how you launch the arkouda server with
-  `CHPL_RT_NUM_THREADS_PER_LOCALE=<threads>` and how you set `AK_HOST`. **This is the key bit:**
-  the HiPerMotif thread count is fixed at server launch (it shows up as `maxTaskPar` in
-  `ak.get_config()`), so the strong-scaling sweep **relaunches the server at each thread count**.
-- **TODO-3**: the graph list (`SPARSE_LADDER`, in increasing size order) and `--edge-file` paths.
-
-## 3. Run
+### Step 1 — stage graphs (LOGIN NODE, has internet; compute nodes don't)
 ```bash
-REPO=$HOME/motif-mpnn OUTDIR=results/scale RUNS=3 AK_PORT=5555 \
-  bash scripts/wulver/run_scale_experiments.sh
+python scripts/wulver/stage_datasets.py --out $GR
 ```
-What it does:
-- **EXP1** — HiPerMotif on the ladder at 128 threads (capability + ceiling). It continues past a
-  graph that OOMs and records a `status=FAILED` row — **that's the point**, we want the ceiling.
-- **EXP2** — ORCA on the same ladder bottom-up until ORCA runs out of time/memory (the crossover).
-- **EXP3** — HiPerMotif strong scaling: threads ∈ {1,2,4,8,16,32,64,128}, **relaunching the
-  server each time**. This is the headline HPC figure.
+This downloads OGB (ogbn-arxiv, ogbn-products) into `data/processed/ogb/` and the SNAP sparse hosts
+(web-BerkStan, roadNet-CA) into `$GR`. Idempotent. (If you ever want a dataset that isn't here,
+tell me and I'll add it to `stage_datasets.py` — don't hand-fetch.)
 
-All rows go to `results/scale/bench.csv`.
-
-### Running one graph manually (handy for testing / a single point)
+### Step 2 — EXP1: HiPerMotif capability ladder (128 threads)
+Start your arkouda server with `CHPL_RT_NUM_THREADS_PER_LOCALE=128`; set `H`/`P` to its host/port.
 ```bash
-PYTHONPATH=$REPO python scripts/wulver/bench_orbits.py \
-  --backend hipermotif --graph ogbn-arxiv --threads 128 --runs 3 \
-  --out results/scale/bench.csv --ak-host <server_host> --ak-port 5555
-# arbitrary staged edge-list:
-PYTHONPATH=$REPO python scripts/wulver/bench_orbits.py \
-  --backend hipermotif --graph roadnet --edge-file /scratch/$USER/roadNet-CA.txt \
-  --threads 128 --runs 3 --out results/scale/bench.csv --ak-host <server_host> --ak-port 5555
+H=<server_host>; P=5555; OUT=results/scale/bench.csv
+for cmd in \
+  "--graph cora" \
+  "--graph ogbn-arxiv" \
+  "--graph webberkstan --edge-file $GR/web-BerkStan.txt" \
+  "--graph ogbn-products" \
+  "--graph roadnetca --edge-file $GR/roadNet-CA.txt" ; do
+  python scripts/wulver/bench_orbits.py --backend hipermotif $cmd \
+    --threads 128 --runs 3 --out $OUT --ak-host $H --ak-port $P --no-mem
+done
+```
+FAILED rows on the big graphs are EXPECTED (that's the ceiling) — the loop continues. Drop `--no-mem`
+only if you want the memory column and `ak.get_mem_used()` works on your build.
+
+### Step 3 — EXP2: ORCA crossover (no server; ORCA is local)
+```bash
+for cmd in "--graph cora" "--graph ogbn-arxiv" "--graph webberkstan --edge-file $GR/web-BerkStan.txt" \
+           "--graph ogbn-products" "--graph roadnetca --edge-file $GR/roadNet-CA.txt" ; do
+  python scripts/wulver/bench_orbits.py --backend orca $cmd --runs 3 --out $OUT
+done
 ```
 
-## 4. Figures + table (run on Wulver or copy the CSV back and run locally)
+### Step 4 — EXP3: strong scaling (the headline HPC figure). Synthetic BA graph, no staging.
+For each thread count: **restart your arkouda server** with that `CHPL_RT_NUM_THREADS_PER_LOCALE`,
+update `H`, then run the one command:
+```bash
+for T in 1 2 4 8 16 32 64 128; do
+  # >>> restart arkouda server with CHPL_RT_NUM_THREADS_PER_LOCALE=$T, set H=<host> <<<
+  python scripts/wulver/bench_orbits.py --backend hipermotif --graph ba --n 150000 --m 6 \
+    --threads $T --runs 3 --out $OUT --ak-host $H --ak-port $P --no-mem
+done
+```
+
+(Alternative: `run_scale_experiments.sh` automates all of EXP1/2/3 — it only needs you to fill the
+`start_server`/`stop_server` functions with your launch command. The runbook above is the manual
+equivalent if you'd rather not edit bash.)
+
+## Figures + table (run on Wulver or copy `bench.csv` back and run locally)
 ```bash
 python scripts/wulver/make_scale_figures.py --csv results/scale/bench.csv \
   --out results/scale --strong-graph ogbn-products
@@ -96,13 +105,12 @@ Produces `figA_strong_scaling`, `figB_size_scaling`, `figC_per_pattern` (PNG+PDF
 - **Cost axis is work, not |E|.** Fig B plots time vs total #embeddings (the real cost driver),
   with |V|,|E| in the table.
 
-## Not in this harness (NEXT PRIORITY, if space/time)
-PGD/ESCAPE head-to-head baseline; dense-social stress (Orkut/Friendster); the at-scale accuracy
-demo (synthetic motif-defined task + molecular). `bench_orbits.py` is backend-agnostic so a
-`pgd`/`escape` backend is a small add when we get there.
+## You don't decide anything here
+The graphs, order, thread sweep, runs, and feature path are all fixed in the runbook. The ONLY
+thing that's yours is your normal `arkouda_server` launch command (with the given
+`CHPL_RT_NUM_THREADS_PER_LOCALE`) — that's procedure, not a choice. If a dataset you need isn't
+staged by `stage_datasets.py`, don't hand-fetch it — tell us and we'll add it to the script.
 
-## What I still need from you (to finalize the driver)
-1. How you launch the arkouda server (interactive vs sbatch; server binary path; module loads) and
-   how you obtain its host — so `start_server`/`stop_server` can be filled exactly.
-2. Confirm `ak.get_mem_used()` exists in your arkouda build (else the memory column is −1).
-3. Which sparse large host(s) you'll stage for the headline (road/web/citation) + their paths.
+## Not in this harness (NEXT PRIORITY, if space/time)
+PGD/ESCAPE head-to-head baseline; dense-social stress (Orkut/Friendster); the molecular accuracy
+benchmark. `bench_orbits.py` is backend-agnostic so a `pgd`/`escape` backend is a small add later.
