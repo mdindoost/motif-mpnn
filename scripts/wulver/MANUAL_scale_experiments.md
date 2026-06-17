@@ -73,18 +73,21 @@ done
 `start_server`/`stop_server` functions with your launch command. The runbook above is the manual
 equivalent if you'd rather not edit bash.)
 
-## Figures + table (run on Wulver or copy `bench.csv` back and run locally)
+### Step 5 — send back the raw data. That's it.
+- `results/scale/bench.csv` — the experiment output. **Everything else (figures, table) is derived
+  from this, and we generate it on our side — you do NOT run the figure script.**
+- the arkouda `server_*.log` (or your job log) if anything OOMed, so we can see where the ceiling hit.
+
+---
+
+## (Our side, not Bartosz's) Figures + table from the CSV
+We run this locally from `bench.csv` — no cluster, no arkouda needed:
 ```bash
 python scripts/wulver/make_scale_figures.py --csv results/scale/bench.csv \
-  --out results/scale --strong-graph ogbn-products
+  --out results/scale --strong-graph ba
 ```
 Produces `figA_strong_scaling`, `figB_size_scaling`, `figC_per_pattern` (PNG+PDF) and
 `table_scale.tex`.
-
-## 5. Send back
-- `results/scale/bench.csv` (the raw data — everything else is derived).
-- The three figures + `table_scale.tex`.
-- The `server_*.log` files if anything OOMed (to see where/why the ceiling hit).
 
 ---
 
