@@ -34,26 +34,36 @@ This downloads OGB (ogbn-arxiv, ogbn-products) into `data/processed/ogb/` and th
 tell me and I'll add it to `stage_datasets.py` — don't hand-fetch.)
 
 ### Step 2 — EXP1: HiPerMotif capability ladder (128 threads)
-Start your arkouda server with `CHPL_RT_NUM_THREADS_PER_LOCALE=128`; set `H`/`P` to its host/port.
+Bounded-degree hosts (road network, citation) LEAD — their size-4 counts are tractable. Start your
+arkouda server with `CHPL_RT_NUM_THREADS_PER_LOCALE=128`; set `H`/`P` to its host/port.
 ```bash
 H=<server_host>; P=5555; OUT=results/scale/bench.csv
 for cmd in \
   "--graph cora" \
   "--graph ogbn-arxiv" \
-  "--graph webberkstan --edge-file $GR/web-BerkStan.txt" \
-  "--graph ogbn-products" \
-  "--graph roadnetca --edge-file $GR/roadNet-CA.txt" ; do
+  "--graph roadnetca --edge-file $GR/roadNet-CA.txt" \
+  "--graph ogbn-products" ; do
   python scripts/wulver/bench_orbits.py --backend hipermotif $cmd \
     --threads 128 --runs 3 --out $OUT --ak-host $H --ak-port $P --no-mem
 done
 ```
-FAILED rows on the big graphs are EXPECTED (that's the ceiling) — the loop continues. Drop `--no-mem`
-only if you want the memory column and `ak.get_mem_used()` works on your build.
+A pattern whose predicted size-4 count exceeds the cap is auto-SKIPPED as a `FAILED` ceiling row
+(node protection) — the loop continues; that's a result, not an error.
+
+> **Hub-heavy graphs are a STRESS case, not the headline.** Web/social graphs (web-BerkStan,
+> Orkut, Friendster) have huge-degree hubs, so their claw/3-star count explodes (cost is driven by
+> the size-4 count, NOT |E|): a single degree-d hub makes ~C(d,3) claws. The harness will skip the
+> exploding patterns as ceiling rows rather than OOM. Run web-BerkStan ONLY as an optional stress
+> point (it documents the ceiling), not as part of the capability ladder:
+> ```bash
+> python scripts/wulver/bench_orbits.py --backend hipermotif --graph webberkstan \
+>   --edge-file $GR/web-BerkStan.txt --threads 128 --runs 1 --out $OUT --ak-host $H --ak-port $P --no-mem
+> ```
 
 ### Step 3 — EXP2: ORCA crossover (no server; ORCA is local)
 ```bash
-for cmd in "--graph cora" "--graph ogbn-arxiv" "--graph webberkstan --edge-file $GR/web-BerkStan.txt" \
-           "--graph ogbn-products" "--graph roadnetca --edge-file $GR/roadNet-CA.txt" ; do
+for cmd in "--graph cora" "--graph ogbn-arxiv" "--graph roadnetca --edge-file $GR/roadNet-CA.txt" \
+           "--graph ogbn-products" ; do
   python scripts/wulver/bench_orbits.py --backend orca $cmd --runs 3 --out $OUT
 done
 ```

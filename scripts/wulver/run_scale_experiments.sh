@@ -53,10 +53,12 @@ stop_server() {
 SPARSE_LADDER=(
   "cora|"                                              # small validation point
   "ogbn-arxiv|"                                        # ogb (pre-stage under data/processed/ogb)
-  # "roadnet|--edge-file /scratch/$USER/roadNet-CA.txt"
-  # "webberkstan|--edge-file /scratch/$USER/web-BerkStan.txt"
-  "ogbn-products|"                                     # the large headline sparse host
+  "roadnetca|--edge-file ${GR:-/scratch/$USER/hm_graphs}/roadNet-CA.txt"  # bounded-degree, tractable
+  "ogbn-products|"                                     # the large headline host
 )
+# NOTE: web/social graphs (web-BerkStan, Orkut, Friendster) are hub-heavy -> claw/size-4 explosion
+# (cost ~ size-4 count, NOT |E|). They are a STRESS/ceiling case, NOT the capability ladder; the
+# bench auto-skips exploding patterns as FAILED ceiling rows (--max-embeddings). Run them separately.
 STRONG_SCALE_GRAPH="ogbn-products"                     # representative sparse mid/large host
 STRONG_SCALE_ARGS=""
 

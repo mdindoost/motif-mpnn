@@ -125,11 +125,31 @@ def server_mem_gb(ak) -> float:
     return -1.0
 
 
-def bench_hipermotif(ak, ar, edges, n, rows, base, measure_mem=True):
+def predict_embeddings(pattern, deg, arr):
+    """Cheap UPPER-BOUND on #embeddings for the degree-driven OPEN patterns (the ones that
+    explode on hub-heavy hosts: a degree-d hub alone makes ~C(d,3) claws). Returns None for
+    patterns bounded by triangle/clique counts (always run those). float64 avoids int64 overflow
+    on huge hubs. Used to SKIP an explosive pattern BEFORE launching it — a client-side timeout
+    can't help because the server would keep computing/OOMing."""
+    d = deg.astype(np.float64)
+    if pattern == "edge":
+        return float(d.sum() / 2.0)
+    if pattern == "p3":
+        return float((d * (d - 1) / 2.0).clip(min=0).sum())
+    if pattern == "claw":
+        return float((d * (d - 1) * (d - 2) / 6.0).clip(min=0).sum())
+    if pattern == "p4" and arr.size:
+        return float(((d[arr[:, 0]] - 1) * (d[arr[:, 1]] - 1)).clip(min=0).sum())
+    return None
+
+
+def bench_hipermotif(ak, ar, edges, n, rows, base, measure_mem=True, max_emb=5e9):
     """Per-pattern timed ar.subgraph_isomorphism (reorder='None'); never pulls the array to
     the client (reads pdarray.size). Appends per-pattern + TOTAL rows into `rows`.
     measure_mem=False (the --no-mem escape hatch) skips all server-memory sampling, so a missing
-    or slow ak.get_mem_used() can never block or perturb the timing runs (mem column = -1)."""
+    or slow ak.get_mem_used() can never block or perturb the timing runs (mem column = -1).
+    A pattern whose predicted upper-bound #embeddings exceeds `max_emb` is SKIPPED (FAILED row)
+    so a hub-driven explosion (e.g. claw on a web graph) records a ceiling instead of OOMing."""
     def _mem():
         return server_mem_gb(ak) if measure_mem else -1.0
     src, dst = backend._symmetrize(edges, n)
@@ -137,10 +157,19 @@ def bench_hipermotif(ak, ar, edges, n, rows, base, measure_mem=True):
         rows.append({**base, "pattern": "TOTAL", "py_seconds": 0.0, "n_embeddings": 0,
                      "server_mem_gb": _mem(), "status": "OK", "reason": ""})
         return
+    arr = np.asarray(edges, dtype=np.int64)
+    deg = np.bincount(arr.ravel(), minlength=n).astype(np.int64)
     G = backend._build_propgraph(ak, ar, src, dst)
     total_t, total_emb, peak_mem = 0.0, 0, _mem()
     for pat in hp.PATTERN_NAMES:
         n_pat = hp.PATTERNS[pat][1]
+        pred = predict_embeddings(pat, deg, arr)
+        if pred is not None and pred > max_emb:
+            rows.append({**base, "pattern": pat, "py_seconds": -1, "n_embeddings": -1,
+                         "server_mem_gb": _mem(), "status": "FAILED",
+                         "reason": f"predicted ~{pred:.2e} embeddings > cap {max_emb:.1e}; "
+                                   f"skipped (hub-driven explosion, node protection)"})
+            continue
         psrc, pdst = backend._symmetrize(hp.PATTERNS[pat][0], n_pat)
         H = backend._build_propgraph(ak, ar, psrc, pdst)
         try:
@@ -203,6 +232,10 @@ def main():
     ap.add_argument("--no-mem", action="store_true",
                     help="skip server-memory sampling entirely (use if ak.get_mem_used is missing/"
                          "slow on your build — memory is optional, never a blocker; column = -1)")
+    ap.add_argument("--max-embeddings", type=float, default=5e9,
+                    help="skip a pattern whose predicted upper-bound #embeddings exceeds this "
+                         "(protects the node from the hub-driven size-4 explosion; the skip is "
+                         "recorded as a FAILED ceiling row). Raise it if you have headroom.")
     # synthetic params
     ap.add_argument("--n", type=int, default=1000)
     ap.add_argument("--p", type=float, default=0.01)
@@ -244,7 +277,8 @@ def main():
                     "maxtaskpar_actual": maxtask, "run_idx": run_idx}
             print(f"[bench] run {run_idx+1}/{args.runs} backend={args.backend} ...")
             if args.backend == "hipermotif":
-                bench_hipermotif(ak, ar, edges, n, rows, base, measure_mem=not args.no_mem)
+                bench_hipermotif(ak, ar, edges, n, rows, base, measure_mem=not args.no_mem,
+                                 max_emb=args.max_embeddings)
             else:
                 bench_orca(edges, n, args.graphlet_size, rows, base)
     except Exception:
