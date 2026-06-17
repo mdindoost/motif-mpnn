@@ -125,16 +125,20 @@ def server_mem_gb(ak) -> float:
     return -1.0
 
 
-def bench_hipermotif(ak, ar, edges, n, rows, base):
+def bench_hipermotif(ak, ar, edges, n, rows, base, measure_mem=True):
     """Per-pattern timed ar.subgraph_isomorphism (reorder='None'); never pulls the array to
-    the client (reads pdarray.size). Appends per-pattern + TOTAL rows into `rows`."""
+    the client (reads pdarray.size). Appends per-pattern + TOTAL rows into `rows`.
+    measure_mem=False (the --no-mem escape hatch) skips all server-memory sampling, so a missing
+    or slow ak.get_mem_used() can never block or perturb the timing runs (mem column = -1)."""
+    def _mem():
+        return server_mem_gb(ak) if measure_mem else -1.0
     src, dst = backend._symmetrize(edges, n)
     if not src:
         rows.append({**base, "pattern": "TOTAL", "py_seconds": 0.0, "n_embeddings": 0,
-                     "server_mem_gb": server_mem_gb(ak), "status": "OK", "reason": ""})
+                     "server_mem_gb": _mem(), "status": "OK", "reason": ""})
         return
     G = backend._build_propgraph(ak, ar, src, dst)
-    total_t, total_emb, peak_mem = 0.0, 0, server_mem_gb(ak)
+    total_t, total_emb, peak_mem = 0.0, 0, _mem()
     for pat in hp.PATTERN_NAMES:
         n_pat = hp.PATTERNS[pat][1]
         psrc, pdst = backend._symmetrize(hp.PATTERNS[pat][0], n_pat)
@@ -145,7 +149,7 @@ def bench_hipermotif(ak, ar, edges, n, rows, base):
                 G, H, return_isos_as="vertices", algorithm_type="si", reorder_type="None")
             dt = time.perf_counter() - t0
             n_emb = int(result[0].size) // n_pat      # pdarray.size -> no client transfer
-            mem = server_mem_gb(ak)
+            mem = _mem()
             peak_mem = max(peak_mem, mem)
             rows.append({**base, "pattern": pat, "py_seconds": round(dt, 6),
                          "n_embeddings": n_emb, "server_mem_gb": round(mem, 3),
@@ -158,7 +162,7 @@ def bench_hipermotif(ak, ar, edges, n, rows, base):
                 pass
         except Exception as ex:  # OOM / timeout / engine error -> record the ceiling, continue
             rows.append({**base, "pattern": pat, "py_seconds": -1, "n_embeddings": -1,
-                         "server_mem_gb": server_mem_gb(ak), "status": "FAILED",
+                         "server_mem_gb": _mem(), "status": "FAILED",
                          "reason": f"{type(ex).__name__}: {str(ex)[:160]}"})
     rows.append({**base, "pattern": "TOTAL", "py_seconds": round(total_t, 6),
                  "n_embeddings": total_emb, "server_mem_gb": round(peak_mem, 3),
@@ -196,6 +200,9 @@ def main():
     ap.add_argument("--out", required=True, help="CSV path (appended; header written if new)")
     ap.add_argument("--ak-host", default="localhost")
     ap.add_argument("--ak-port", default=5555, type=int)
+    ap.add_argument("--no-mem", action="store_true",
+                    help="skip server-memory sampling entirely (use if ak.get_mem_used is missing/"
+                         "slow on your build — memory is optional, never a blocker; column = -1)")
     # synthetic params
     ap.add_argument("--n", type=int, default=1000)
     ap.add_argument("--p", type=float, default=0.01)
@@ -237,7 +244,7 @@ def main():
                     "maxtaskpar_actual": maxtask, "run_idx": run_idx}
             print(f"[bench] run {run_idx+1}/{args.runs} backend={args.backend} ...")
             if args.backend == "hipermotif":
-                bench_hipermotif(ak, ar, edges, n, rows, base)
+                bench_hipermotif(ak, ar, edges, n, rows, base, measure_mem=not args.no_mem)
             else:
                 bench_orca(edges, n, args.graphlet_size, rows, base)
     except Exception:
