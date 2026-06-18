@@ -36,7 +36,10 @@ start_server() {   # $1 = threads-per-locale
 }
 stop_server() { : ; }   # e.g. python -c "import arkouda as ak; ak.connect('$AK_HOST',$AK_PORT); ak.shutdown()"
 
-echo "[one-graph] graph=$GRAPH node=$(hostname) threads=$THREADS -> $OUT"
+echo "=================================================================="
+echo " EXP1+EXP2  graph=$GRAPH  (HiPerMotif @${THREADS}t + ORCA crossover)"
+echo " node=$(hostname)  out=$OUT"
+echo "=================================================================="
 start_server "$THREADS"
 # HiPerMotif (engine, needs the server)
 python scripts/wulver/bench_orbits.py --backend hipermotif --graph "$GRAPH" $EARGS \

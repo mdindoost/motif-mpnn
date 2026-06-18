@@ -34,6 +34,10 @@ start_server() {   # $1 = threads-per-locale
 }
 stop_server() { : ; }
 
+echo "=================================================================="
+echo " EXP3  strong-scaling sweep (Fig A)  graph=$GRAPH $NARG"
+echo " node=$(hostname)  threads={1,2,4,8,16,32,64,128}  out=$OUT"
+echo "=================================================================="
 for T in 1 2 4 8 16 32 64 128; do
   if [ "$T" -le 8 ]; then R="$RUNS_LOW"; else R="$RUNS"; fi
   start_server "$T"
