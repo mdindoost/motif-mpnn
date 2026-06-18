@@ -143,7 +143,7 @@ def predict_embeddings(pattern, deg, arr):
     return None
 
 
-def bench_hipermotif(ak, ar, edges, n, rows, base, measure_mem=True, max_emb=5e9):
+def bench_hipermotif(ak, ar, edges, n, base, emit, measure_mem=True, max_emb=2e8):
     """Per-pattern timed ar.subgraph_isomorphism (reorder='None'); never pulls the array to
     the client (reads pdarray.size). Appends per-pattern + TOTAL rows into `rows`.
     measure_mem=False (the --no-mem escape hatch) skips all server-memory sampling, so a missing
@@ -154,8 +154,8 @@ def bench_hipermotif(ak, ar, edges, n, rows, base, measure_mem=True, max_emb=5e9
         return server_mem_gb(ak) if measure_mem else -1.0
     src, dst = backend._symmetrize(edges, n)
     if not src:
-        rows.append({**base, "pattern": "TOTAL", "py_seconds": 0.0, "n_embeddings": 0,
-                     "server_mem_gb": _mem(), "status": "OK", "reason": ""})
+        emit({**base, "pattern": "TOTAL", "py_seconds": 0.0, "n_embeddings": 0,
+              "server_mem_gb": _mem(), "status": "OK", "reason": ""})
         return
     arr = np.asarray(edges, dtype=np.int64)
     deg = np.bincount(arr.ravel(), minlength=n).astype(np.int64)
@@ -165,13 +165,17 @@ def bench_hipermotif(ak, ar, edges, n, rows, base, measure_mem=True, max_emb=5e9
         n_pat = hp.PATTERNS[pat][1]
         pred = predict_embeddings(pat, deg, arr)
         if pred is not None and pred > max_emb:
-            rows.append({**base, "pattern": pat, "py_seconds": -1, "n_embeddings": -1,
-                         "server_mem_gb": _mem(), "status": "FAILED",
-                         "reason": f"predicted ~{pred:.2e} embeddings > cap {max_emb:.1e}; "
-                                   f"skipped (hub-driven explosion, node protection)"})
+            print(f"  [skip] {base['graph']} {pat}: predicted ~{pred:.2e} > cap {max_emb:.1e} "
+                  f"-> ceiling row (would be ~{pred/2e5/60:.0f} min at ~200K/s)", flush=True)
+            emit({**base, "pattern": pat, "py_seconds": -1, "n_embeddings": -1,
+                  "server_mem_gb": _mem(), "status": "FAILED",
+                  "reason": f"predicted ~{pred:.2e} embeddings > cap {max_emb:.1e}; "
+                            f"skipped (hub-driven explosion, node protection)"})
             continue
         psrc, pdst = backend._symmetrize(hp.PATTERNS[pat][0], n_pat)
         H = backend._build_propgraph(ak, ar, psrc, pdst)
+        _pm = f"~{pred:.1e}" if pred is not None else "n/a"
+        print(f"  [run ] {base['graph']} {pat} run{base['run_idx']} (predicted {_pm}) ...", flush=True)
         try:
             t0 = time.perf_counter()
             result = ar.subgraph_isomorphism(
@@ -180,25 +184,25 @@ def bench_hipermotif(ak, ar, edges, n, rows, base, measure_mem=True, max_emb=5e9
             n_emb = int(result[0].size) // n_pat      # pdarray.size -> no client transfer
             mem = _mem()
             peak_mem = max(peak_mem, mem)
-            rows.append({**base, "pattern": pat, "py_seconds": round(dt, 6),
-                         "n_embeddings": n_emb, "server_mem_gb": round(mem, 3),
-                         "status": "OK", "reason": ""})
+            emit({**base, "pattern": pat, "py_seconds": round(dt, 6),
+                  "n_embeddings": n_emb, "server_mem_gb": round(mem, 3),
+                  "status": "OK", "reason": ""})
             total_t += dt
             total_emb += n_emb
             try:
                 del result
             except Exception:
                 pass
-        except Exception as ex:  # OOM / timeout / engine error -> record the ceiling, continue
-            rows.append({**base, "pattern": pat, "py_seconds": -1, "n_embeddings": -1,
-                         "server_mem_gb": _mem(), "status": "FAILED",
-                         "reason": f"{type(ex).__name__}: {str(ex)[:160]}"})
-    rows.append({**base, "pattern": "TOTAL", "py_seconds": round(total_t, 6),
-                 "n_embeddings": total_emb, "server_mem_gb": round(peak_mem, 3),
-                 "status": "OK", "reason": ""})
+        except Exception as ex:  # OOM / engine error -> record the ceiling, continue
+            emit({**base, "pattern": pat, "py_seconds": -1, "n_embeddings": -1,
+                  "server_mem_gb": _mem(), "status": "FAILED",
+                  "reason": f"{type(ex).__name__}: {str(ex)[:160]}"})
+    emit({**base, "pattern": "TOTAL", "py_seconds": round(total_t, 6),
+          "n_embeddings": total_emb, "server_mem_gb": round(peak_mem, 3),
+          "status": "OK", "reason": ""})
 
 
-def bench_orca(edges, n, graphlet_size, rows, base):
+def bench_orca(edges, n, graphlet_size, base, emit):
     """ORCA total time (single-threaded oracle). Per-pattern is not exposed -> TOTAL only."""
     try:
         t0 = time.perf_counter()
@@ -207,13 +211,13 @@ def bench_orca(edges, n, graphlet_size, rows, base):
         # client-side memory here is fine: ORCA is a local subprocess, not the arkouda server.
         import resource
         mem = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1e6  # KB->GB (Linux KB)
-        rows.append({**base, "pattern": "TOTAL", "py_seconds": round(dt, 6),
-                     "n_embeddings": int(mat.sum()), "server_mem_gb": round(mem, 3),
-                     "status": "OK", "reason": ""})
+        emit({**base, "pattern": "TOTAL", "py_seconds": round(dt, 6),
+              "n_embeddings": int(mat.sum()), "server_mem_gb": round(mem, 3),
+              "status": "OK", "reason": ""})
     except Exception as ex:
-        rows.append({**base, "pattern": "TOTAL", "py_seconds": -1, "n_embeddings": -1,
-                     "server_mem_gb": -1, "status": "FAILED",
-                     "reason": f"{type(ex).__name__}: {str(ex)[:160]}"})
+        emit({**base, "pattern": "TOTAL", "py_seconds": -1, "n_embeddings": -1,
+              "server_mem_gb": -1, "status": "FAILED",
+              "reason": f"{type(ex).__name__}: {str(ex)[:160]}"})
 
 
 def main():
@@ -232,10 +236,11 @@ def main():
     ap.add_argument("--no-mem", action="store_true",
                     help="skip server-memory sampling entirely (use if ak.get_mem_used is missing/"
                          "slow on your build — memory is optional, never a blocker; column = -1)")
-    ap.add_argument("--max-embeddings", type=float, default=5e9,
+    ap.add_argument("--max-embeddings", type=float, default=2e8,
                     help="skip a pattern whose predicted upper-bound #embeddings exceeds this "
-                         "(protects the node from the hub-driven size-4 explosion; the skip is "
-                         "recorded as a FAILED ceiling row). Raise it if you have headroom.")
+                         "(protects the node from the hub-driven size-4 explosion; recorded as a "
+                         "FAILED ceiling row). Default 2e8 ~ 15 min/pattern at the observed "
+                         "~200K embeddings/sec; raise it if you have time/RAM headroom.")
     # synthetic params
     ap.add_argument("--n", type=int, default=1000)
     ap.add_argument("--p", type=float, default=0.01)
@@ -269,18 +274,36 @@ def main():
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
     new_file = not out.exists()
-    rows = []
+    # INCREMENTAL write: open once, flush every row immediately so a hang/kill never loses data
+    # and you get a live progress trail (the lesson from the 17h silent hang).
+    fcsv = open(out, "a", newline="")
+    writer = csv.DictWriter(fcsv, fieldnames=CSV_FIELDS)
+    if new_file:
+        writer.writeheader(); fcsv.flush()
+    n_rows = n_fail = 0
+
+    def emit(r):
+        nonlocal n_rows, n_fail
+        writer.writerow({k: r.get(k, "") for k in CSV_FIELDS}); fcsv.flush()
+        n_rows += 1
+        if r.get("status") == "FAILED":
+            n_fail += 1
+        print(f"  [csv ] {r['graph']} {r['pattern']:9} run{r.get('run_idx')} {r['status']:6} "
+              f"t={r.get('py_seconds')}s n_emb={r.get('n_embeddings')}"
+              f"{(' | ' + r['reason']) if r.get('reason') else ''}", flush=True)
+
     try:
         for run_idx in range(args.runs):
             base = {"graph": args.graph, "n_nodes": n, "n_edges": n_edges,
                     "backend": args.backend, "threads_label": args.threads,
                     "maxtaskpar_actual": maxtask, "run_idx": run_idx}
-            print(f"[bench] run {run_idx+1}/{args.runs} backend={args.backend} ...")
+            print(f"[bench] run {run_idx+1}/{args.runs} backend={args.backend} graph={args.graph} ...",
+                  flush=True)
             if args.backend == "hipermotif":
-                bench_hipermotif(ak, ar, edges, n, rows, base, measure_mem=not args.no_mem,
+                bench_hipermotif(ak, ar, edges, n, base, emit, measure_mem=not args.no_mem,
                                  max_emb=args.max_embeddings)
             else:
-                bench_orca(edges, n, args.graphlet_size, rows, base)
+                bench_orca(edges, n, args.graphlet_size, base, emit)
     except Exception:
         traceback.print_exc()
     finally:
@@ -289,15 +312,8 @@ def main():
                 ak.disconnect()
             except Exception:
                 pass
-
-    with open(out, "a", newline="") as f:
-        w = csv.DictWriter(f, fieldnames=CSV_FIELDS)
-        if new_file:
-            w.writeheader()
-        for r in rows:
-            w.writerow({k: r.get(k, "") for k in CSV_FIELDS})
-    n_fail = sum(1 for r in rows if r.get("status") == "FAILED")
-    print(f"[bench] wrote {len(rows)} rows to {out} ({n_fail} FAILED). done.")
+        fcsv.close()
+    print(f"[bench] wrote {n_rows} rows to {out} ({n_fail} FAILED). done.")
 
 
 if __name__ == "__main__":
