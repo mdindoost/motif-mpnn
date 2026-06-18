@@ -18,7 +18,9 @@ REPO="${REPO:-$HOME/motif-mpnn}"; cd "$REPO"; export PYTHONPATH="$REPO"
 GRAPH="${GRAPH:-ba}"; NARG="${NARG:---n 10000 --m 5}"   # small synthetic; 1-thread must be tractable
 AK_PORT="${AK_PORT:-5555}"
 OUT="${OUT:-results/scale/bench_strong.csv}"
-RUNS="${RUNS:-3}"; RUNS_LOW="${RUNS_LOW:-$RUNS}"        # set RUNS_LOW=1 to speed up the slow low-thread points
+RUNS="${RUNS:-3}"; RUNS_LOW="${RUNS_LOW:-1}"           # slow low-thread points (T<=8) run ONCE by default
+                                                       #   (the 1-thread point is the long pole, ~1h on BA n=10000);
+                                                       #   set RUNS_LOW=3 if you want repeats there too
 mkdir -p "$(dirname "$OUT")"
 
 # ---- TODO-2: launch/stop your arkouda server with N threads; set AK_HOST. ----
