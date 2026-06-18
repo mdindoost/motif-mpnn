@@ -25,6 +25,28 @@ re-verify on the big graphs.
 ## arkouda server (your usual `arkouda_server` launch). Everything else is exact commands.
 Set once: `export REPO=$HOME/motif-mpnn; export PYTHONPATH=$REPO; cd $REPO; export GR=/scratch/$USER/hm_graphs`
 
+### FAST PATH — one node per graph, in parallel (recommended)
+The graphs are independent jobs, so run each on its OWN node concurrently → wall-clock = the
+slowest single graph, not the sum. After Step 1 (stage), submit one `run_one_graph.sh` per graph
+and `run_strong_scaling.sh` on a dedicated node — all at once. Each job: its own arkouda server,
+its own output CSV. (Fill the SLURM header + server-launch TODO in those two scripts once.)
+```bash
+# one node per graph (each writes results/scale/bench_<graph>.csv):
+GRAPH=cora          sbatch scripts/wulver/run_one_graph.sh
+GRAPH=ogbn-arxiv    sbatch scripts/wulver/run_one_graph.sh
+GRAPH=ogbn-products sbatch scripts/wulver/run_one_graph.sh
+GRAPH=roadnetca EARGS="--edge-file $GR/roadNet-CA.txt" sbatch scripts/wulver/run_one_graph.sh
+# strong-scaling sweep (Fig A) on ONE dedicated node, concurrently:
+sbatch scripts/wulver/run_strong_scaling.sh
+```
+RULES: (1) each job = its own arkouda server (own host/port); (2) **never** point two parallel
+jobs at the same `--out` (concurrent flushes corrupt it) — `run_one_graph.sh` defaults to a
+per-graph file; (3) same partition / identical nodes so the cross-graph + strong-scaling
+comparisons are valid. We merge all the `bench_*.csv` at the end. Hub-heavy graphs (web/social)
+auto-skip exploding patterns as ceiling rows in seconds — fine to include if you want the ceiling.
+
+The Steps below are the equivalent SINGLE-NODE sequential path (fallback / small runs).
+
 ### Step 1 — stage graphs (LOGIN NODE, has internet; compute nodes don't)
 ```bash
 python scripts/wulver/stage_datasets.py --out $GR
@@ -93,7 +115,7 @@ equivalent if you'd rather not edit bash.)
 ## (Our side, not Bartosz's) Figures + table from the CSV
 We run this locally from `bench.csv` — no cluster, no arkouda needed:
 ```bash
-python scripts/wulver/make_scale_figures.py --csv results/scale/bench.csv \
+python scripts/wulver/make_scale_figures.py --csv results/scale/bench_*.csv \
   --out results/scale --strong-graph ba
 ```
 Produces `figA_strong_scaling`, `figB_size_scaling`, `figC_per_pattern` (PNG+PDF) and
