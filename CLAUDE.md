@@ -614,3 +614,13 @@ The backend is **built and unit-tested locally**; only the Wulver equivalence ru
 - At-scale story: report extraction time / parallel scaling and the per-motif compute-vs-accuracy frontier on large hosts (the proposal's open `\todo` results).
 
 **Naming note:** the engine is **HiPerMotif** (Dindoost et al., HPEC 2025, arXiv:2507.04130). The repo was reconciled from the old "HiPerXplorer" name on 2026-06-09 — do not reintroduce it.
+
+---
+
+## 14. HPEC 2026 scale experiments + strong-scaling bottleneck (status 2026-06-19)
+
+The HPEC paper's spine is the **parallel performance/scaling** of HiPerMotif as a substructure-feature extractor (shared-memory, one Wulver node, 64/128 cores), NOT a speed contest with ORCA. **ORCA is combinatorial orbit *counting* (≤5 graphlets, no instances) and is fundamentally faster + lighter than HiPerMotif's *enumeration* — do not try to beat it.** Reframed contribution: exact features for patterns ORCA can't do (size-6+, labeled, directed, arbitrary) + at scale; ORCA = oracle + coverage boundary. (Full plan: memory `project-hpec-paper-plan`.)
+
+**Scaling harness** (all `scripts/wulver/`, branch `expressivity-demo`): `bench_orbits.py` (per-graph timing → CSV; `reorder_type="None"`; per-pattern + TOTAL; reads `result[0].size` so no client transfer; `--no-mem`; predict-guard `--max-embeddings` skips hub-explosive open patterns as FAILED ceiling rows; incremental flush + live prints; `--graph reg` = random-regular for clean strong scaling, `ba`=scale-free load-imbalance case). `run_one_graph.sh` (one graph/node), `run_strong_scaling.sh` (thread sweep, server relaunch per thread count), `stage_datasets.py`, `scale_status.py`, `make_scale_figures.py`, `verify_orbit_csv_equals_orca.py`, `PERTASK_MERGE_FIX.md`.
+
+**Key results:** EXP1 — roadNet-CA = headline (full 15 orbits, ~2M nodes, ~4.4 min @128t, deterministic); OGB = hub-explosion ceiling cases. **Strong scaling caps at ~8 cores** (near-perfect to 8, then degrades; 128 slower than 8), proven workload-independent → root cause is the global `appendBlock` merge mutex (the §13 race fix) serializing result assembly. **Fix in progress (Bartosz's Claude, in Arachne `SubgraphSearch.chpl`):** replace the global lock with **per-task-local accumulation + post-`forall` concat** (lock-free, still contiguous) — see `scripts/wulver/PERTASK_MERGE_FIX.md`. After rebuild: re-confirm `dump_all_arrays.py` repeat-rows=0, then re-run `run_strong_scaling.sh` — the make-or-break is whether it now scales to 64/128. Cost is driven by the size-4 subgraph count (degree), not |E|: claw/p4/p3 dominate; the search itself parallelizes well (p4 ~90% eff @8 cores).
