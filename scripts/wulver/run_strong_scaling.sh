@@ -15,7 +15,10 @@ set -u
 # #SBATCH --job-name=hm-strong --nodes=1 --exclusive --mem=0 --time=12:00:00 --partition=<...>
 
 REPO="${REPO:-$HOME/motif-mpnn}"; cd "$REPO"; export PYTHONPATH="$REPO"
-GRAPH="${GRAPH:-ba}"; NARG="${NARG:---n 10000 --m 5}"   # small synthetic; 1-thread must be tractable
+# DEFAULT = random REGULAR graph (uniform degree -> no hubs -> all patterns scale -> clean Fig A).
+# (ba/scale-free triggers a claw load-imbalance that tanks the TOTAL curve — keep ba only as the
+#  separate load-imbalance case study: GRAPH=ba NARG="--n 10000 --m 5".)
+GRAPH="${GRAPH:-reg}"; NARG="${NARG:---n 20000 --m 6}"   # 6-regular, 20k nodes; --m is the degree d
 AK_PORT="${AK_PORT:-5555}"
 OUT="${OUT:-results/scale/bench_strong.csv}"
 RUNS="${RUNS:-3}"; RUNS_LOW="${RUNS_LOW:-1}"           # slow low-thread points (T<=8) run ONCE by default

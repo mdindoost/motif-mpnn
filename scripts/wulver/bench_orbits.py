@@ -85,9 +85,11 @@ def load_graph(name: str, edge_file: str | None, n_synth: int, p_synth: float,
                     raw.add((min(u, v), max(u, v)))
         return [(u, v) for (u, v) in raw], len(nodes)
 
-    if name.startswith("gnp"):
+    if name.startswith("reg"):   # random d-regular: UNIFORM degree -> no hubs -> clean strong
+        G = nx.random_regular_graph(m_synth, n_synth, seed=seed)   # use --m as the degree d
+    elif name.startswith("gnp"):
         G = nx.gnp_random_graph(n_synth, p_synth, seed=seed)
-    elif name.startswith("ba"):  # Barabasi-Albert: degree skew (realistic load imbalance)
+    elif name.startswith("ba"):  # Barabasi-Albert: degree skew -> hubs -> load-imbalance case
         G = nx.barabasi_albert_graph(n_synth, m_synth, seed=seed)
     elif name in ("cora", "citeseer", "pubmed"):
         import importlib.util
