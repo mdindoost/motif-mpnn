@@ -48,6 +48,13 @@ PATTERNS: Dict[str, Tuple[List[Tuple[int, int]], int]] = {
     "c4":       ([(0, 1), (1, 2), (2, 3), (3, 0)], 4),
     "diamond":  ([(0, 1), (0, 3), (1, 2), (1, 3), (2, 3)], 4),  # K4 minus edge (0,2)
     "k4":       ([(0, 1), (0, 2), (0, 3), (1, 2), (1, 3), (2, 3)], 4),
+    # --- beyond-ORCA long cycles (NOT part of the 15-orbit size-4 schema) ---
+    # Cn is vertex-transitive: |Aut(Cn)|=2n, a single automorphism orbit. ORCA/ESCAPE
+    # (<=5-vertex) and PGD (<=4) cannot count C6+; HiPerMotif searches them as patterns.
+    "c5":       ([(0, 1), (1, 2), (2, 3), (3, 4), (4, 0)], 5),
+    "c6":       ([(0, 1), (1, 2), (2, 3), (3, 4), (4, 5), (5, 0)], 6),
+    "c7":       ([(0, 1), (1, 2), (2, 3), (3, 4), (4, 5), (5, 6), (6, 0)], 7),
+    "c8":       ([(0, 1), (1, 2), (2, 3), (3, 4), (4, 5), (5, 6), (6, 7), (7, 0)], 8),
 }
 
 
@@ -126,8 +133,14 @@ _PATTERN_ORBIT_TO_ORCA: Dict[Tuple[str, int], int] = {
     (name, oid): orca for orca, name, oid in _MAPPING
 }
 
-# patterns that actually contribute orbits (all 9), in a stable order
-PATTERN_NAMES: List[str] = list(PATTERNS.keys())
+# patterns that actually contribute the 15 ORCA size-4 orbits (all 9), in a stable order.
+# Pinned explicitly so adding the beyond-ORCA cycle patterns to PATTERNS above does NOT
+# change the orbit-extraction path (hipermotif_backend, build_orbit_table, bench default).
+PATTERN_NAMES: List[str] = ["edge", "p3", "triangle", "p4", "claw", "paw",
+                            "c4", "diamond", "k4"]
+
+# Beyond-ORCA cycle patterns, selected explicitly (e.g. bench --patterns c6 c7 c8).
+CYCLE_PATTERN_NAMES: List[str] = ["c5", "c6", "c7", "c8"]
 
 
 def normalize_embeddings(pattern: str, embeddings: np.ndarray, num_host_nodes: int,

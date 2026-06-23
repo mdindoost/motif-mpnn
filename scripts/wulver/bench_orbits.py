@@ -145,7 +145,8 @@ def predict_embeddings(pattern, deg, arr):
     return None
 
 
-def bench_hipermotif(ak, ar, edges, n, base, emit, measure_mem=True, max_emb=2e8):
+def bench_hipermotif(ak, ar, edges, n, base, emit, measure_mem=True, max_emb=2e8,
+                     patterns=None):
     """Per-pattern timed ar.subgraph_isomorphism (reorder='None'); never pulls the array to
     the client (reads pdarray.size). Appends per-pattern + TOTAL rows into `rows`.
     measure_mem=False (the --no-mem escape hatch) skips all server-memory sampling, so a missing
@@ -163,7 +164,8 @@ def bench_hipermotif(ak, ar, edges, n, base, emit, measure_mem=True, max_emb=2e8
     deg = np.bincount(arr.ravel(), minlength=n).astype(np.int64)
     G = backend._build_propgraph(ak, ar, src, dst)
     total_t, total_emb, peak_mem = 0.0, 0, _mem()
-    for pat in hp.PATTERN_NAMES:
+    pattern_list = patterns or hp.PATTERN_NAMES  # default = the 9 size-4 graphlets
+    for pat in pattern_list:
         n_pat = hp.PATTERNS[pat][1]
         pred = predict_embeddings(pat, deg, arr)
         if pred is not None and pred > max_emb:
@@ -243,6 +245,10 @@ def main():
                          "(protects the node from the hub-driven size-4 explosion; recorded as a "
                          "FAILED ceiling row). Default 2e8 ~ 15 min/pattern at the observed "
                          "~200K embeddings/sec; raise it if you have time/RAM headroom.")
+    ap.add_argument("--patterns", nargs="+", default=None,
+                    help="explicit pattern list (default = the 9 size-4 graphlets). Use "
+                         "'c6 c7 c8' for the beyond-ORCA long-cycle experiment (EXP-A); cycles "
+                         "are bounded-degree-safe so the --max-embeddings guard rarely fires.")
     # synthetic params
     ap.add_argument("--n", type=int, default=1000)
     ap.add_argument("--p", type=float, default=0.01)
@@ -303,7 +309,7 @@ def main():
                   flush=True)
             if args.backend == "hipermotif":
                 bench_hipermotif(ak, ar, edges, n, base, emit, measure_mem=not args.no_mem,
-                                 max_emb=args.max_embeddings)
+                                 max_emb=args.max_embeddings, patterns=args.patterns)
             else:
                 bench_orca(edges, n, args.graphlet_size, base, emit)
     except Exception:

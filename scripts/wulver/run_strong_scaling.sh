@@ -24,6 +24,9 @@ OUT="${OUT:-results/scale/bench_strong.csv}"
 RUNS="${RUNS:-3}"; RUNS_LOW="${RUNS_LOW:-1}"           # slow low-thread points (T<=8) run ONCE by default
                                                        #   (the 1-thread point is the long pole, ~1h on BA n=10000);
                                                        #   set RUNS_LOW=3 if you want repeats there too
+PATTERNS="${PATTERNS:-}"   # empty = the 9 size-4 graphlets (default). EXP-A beyond-ORCA cycles:
+                          #   PATTERNS="c6 c7 c8" OUT=results/scale/bench_cycles_strong.csv ./run_strong_scaling.sh
+PAT_ARG=""; [ -n "$PATTERNS" ] && PAT_ARG="--patterns $PATTERNS"
 mkdir -p "$(dirname "$OUT")"
 
 # ---- TODO-2: launch/stop your arkouda server with N threads; set AK_HOST. ----
@@ -46,7 +49,7 @@ for T in 1 2 4 8 16 32 64 128; do
   start_server "$T"
   echo "[strong] threads=$T runs=$R graph=$GRAPH $NARG -> $OUT"
   python scripts/wulver/bench_orbits.py --backend hipermotif --graph "$GRAPH" $NARG \
-    --threads "$T" --runs "$R" --out "$OUT" --ak-host "$AK_HOST" --ak-port "$AK_PORT" --no-mem
+    --threads "$T" --runs "$R" --out "$OUT" --ak-host "$AK_HOST" --ak-port "$AK_PORT" --no-mem $PAT_ARG
   stop_server
 done
 echo "[strong] done: $OUT  (check maxtaskpar_actual varied 1..128 in the CSV)"
