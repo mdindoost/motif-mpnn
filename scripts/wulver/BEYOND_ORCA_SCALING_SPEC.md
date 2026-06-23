@@ -36,6 +36,28 @@ Check: for each Cn, `n_embeddings / (2*n)` from (b) must equal the **induced_Cn*
 This decides whether the paper's cycle feature is "induced Cn" or "all simple Cn" — both are
 beyond ORCA; we just need to state the right one and re-run the local CSL demo to match.
 
+## STEP 0b (REQUIRED) — confirm HiPerMotif extracts the CSL-separating cycles
+Closes the "HiPerMotif is necessary, not just cycles" gap: the accuracy result computes the
+cycle features with networkx; this confirms HiPerMotif reproduces them on the actual CSL graphs.
+The networkx reference shows the full C3-C8 spectrum gives 10/10 distinct class signatures while
+the ORCA-coverable subset C3-C5 gives only 5/10 (= the ORCA-73 ceiling), so C6-C8 are the
+beyond-ORCA completion. CSL graphs are tiny (n=41), so this is seconds at 1 thread.
+```
+# (a) stage the 10 CSL class graphs + networkx reference (no arkouda):
+conda run -n motif-mpnn python scripts/wulver/stage_csl_and_oracle.py
+#   -> data/precompute/csl_stage/csl_s<skip>.txt + csl_cycle_reference.json
+# (b) run HiPerMotif c5 c6 c7 c8 on each of the 10 CSL edge-files (1 thread):
+for f in data/precompute/csl_stage/csl_s*.txt; do
+  python scripts/wulver/bench_orbits.py --backend hipermotif --graph "$(basename "$f" .txt)" \
+    --edge-file "$f" --patterns c5 c6 c7 c8 --threads 1 --runs 1 \
+    --out results/scale/csl_cycles.csv --no-mem
+done
+```
+Check: per CSL graph and per Cn, `n_embeddings/(2*n)` must equal the reference's `induced`
+(or `all_simple`) Cn count. That proves HiPerMotif extracts the same C6-C8 cycles that
+complete CSL separation -> the accuracy claim is HiPerMotif's, not just networkx's. Send back
+`results/scale/csl_cycles.csv` and which of induced/all_simple it matched.
+
 ## EXP-A (RANK 1) — strong scaling of C6/C7/C8 extraction
 Cycles are bounded-degree-safe (won't hub-explode), so they scale where size-4 ran. Reuse the
 strong-scaling runner three times (your server-relaunch TODO-2 is already filled):
